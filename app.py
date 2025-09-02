@@ -34,9 +34,7 @@ DEFAULT_VARIANTS = [
     ("Cidre Val de Rance", 20, 96),
 ]
 
-# Matériel encodé dans Movement.notes : ||EQ|tireuse=1;co2=2;comptoir=0;tonnelle=1
 EQ_KEYS = ("tireuse", "co2", "comptoir", "tonnelle")
-
 
 # --------- Initialisation catalogue ----------
 def seed_if_empty():
@@ -54,9 +52,7 @@ def seed_if_empty():
             db.session.add(Variant(product_id=prods[name].id, size_l=size, price_ttc=price))
         db.session.commit()
 
-
 def get_or_create_equipment_placeholder():
-    """Variant spécial pour mouvements 'matériel seul' (0L, 0€)."""
     prod = Product.query.filter(func.lower(Product.name) == "matériel seul").first()
     if not prod:
         prod = Product(name="Matériel seul")
@@ -70,9 +66,7 @@ def get_or_create_equipment_placeholder():
         db.session.commit()
     return v
 
-
 def ensure_catalog_fixes():
-    """Corrige le catalogue existant (prix Coreff Ambrée + placeholder matériel)."""
     prod = Product.query.filter(func.lower(Product.name) == "coreff ambrée").first()
     if prod:
         v = Variant.query.filter_by(product_id=prod.id, size_l=22).first()
@@ -82,9 +76,7 @@ def ensure_catalog_fixes():
             db.session.commit()
     get_or_create_equipment_placeholder()
 
-
 def ensure_data_consistency():
-    """Évite les NULL anciens qui font planter les calculs."""
     db.session.execute(
         update(Movement).where(Movement.unit_price_ttc.is_(None)).values(unit_price_ttc=0.0)
     )
@@ -92,7 +84,6 @@ def ensure_data_consistency():
         update(Movement).where(Movement.deposit_per_keg.is_(None)).values(deposit_per_keg=0.0)
     )
     db.session.commit()
-
 
 # --------- Encodage / Décodage matériel ----------
 def pack_equipment(notes_text, eq_dict):
@@ -106,7 +97,6 @@ def pack_equipment(notes_text, eq_dict):
         eq_block = "||EQ|" + ";".join(parts)
         return (clean + " " + eq_block).strip()
     return clean
-
 
 def unpack_equipment(notes_text):
     eq = {k: 0 for k in EQ_KEYS}
@@ -130,21 +120,18 @@ def unpack_equipment(notes_text):
         return eq, human
     return eq, txt.strip()
 
-
 def sum_equipment_for_client(client_id: int):
-    """Somme nette du matériel chez le client (OUT +, IN/DEFECT -)."""
     totals = {k: 0 for k in EQ_KEYS}
     movements = Movement.query.filter_by(client_id=client_id).all()
     for m in movements:
         eq, _ = unpack_equipment(m.notes)
-        sign = 1 if m.type == 'OUT' else -1
+        sign = 1 if m.type == 'OUT' else -1  # DEFECT agit comme IN côté matériel
         for k in EQ_KEYS:
             totals[k] += sign * int(eq.get(k, 0) or 0)
     for k in EQ_KEYS:
         if totals[k] < 0:
             totals[k] = 0
     return totals
-
 
 # --------- Expressions SQL réutilisables ----------
 BEER_VALUE_EXPR = case(
@@ -164,7 +151,6 @@ STOCK_EXPR = case(
     (Movement.type == 'DEFECT', -Movement.qty),
     else_=0
 )
-
 
 # --------- App Factory ----------
 def create_app():
@@ -214,7 +200,7 @@ def create_app():
             if m.client_id is None:
                 continue
             eq, _ = unpack_equipment(m.notes)
-            sign = 1 if m.type == 'OUT' else -1  # DEFECT agit comme IN côté matériel
+            sign = 1 if m.type == 'OUT' else -1
             bucket = equipment_by_client.setdefault(m.client_id, {k: 0 for k in EQ_KEYS})
             for k in EQ_KEYS:
                 bucket[k] += sign * int(eq.get(k, 0) or 0)
@@ -445,6 +431,5 @@ def create_app():
         return render_template('products.html', rows=rows)
 
     return app
-
 
 app = create_app()
