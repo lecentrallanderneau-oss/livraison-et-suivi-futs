@@ -38,12 +38,12 @@ DEFAULT_VARIANTS = [
 EQ_KEYS = ("tireuse", "co2", "comptoir", "tonnelle", "ecocup")
 
 # Produits techniques Ecocup
-ECOCUP_WASH_NAME = "Ecocup lavage"
-ECOCUP_LOSS_NAME = "Ecocup perdu"
-ECOCUP_WASH_PRICE = 0.10  # €/gobelet récupéré (lavage)
-ECOCUP_LOSS_PRICE = 1.00  # €/gobelet manquant
+ECOCUP_WASH_NAME = "Ecocup lavage"   # 0L @ 0.10€ facturé à la reprise pour chaque gobelet rendu
+ECOCUP_LOSS_NAME = "Ecocup perdu"    # 0L @ 1.00€ facturé à la reprise pour chaque gobelet manquant
+ECOCUP_WASH_PRICE = 0.10
+ECOCUP_LOSS_PRICE = 1.00
 
-# Flags système dans notes
+# Flags système (pour les totaux)
 FLAG_WASH = "||SYS|ECOCUP_WASH"
 FLAG_LOSS = "||SYS|ECOCUP_LOSS"
 
@@ -105,7 +105,7 @@ def get_or_create_ecocup_variants():
 
 
 def ensure_catalog_fixes():
-    """Corrige le catalogue existant (prix Coreff Ambrée + placeholders)."""
+    """Corrige le catalogue existant (prix Coreff Ambrée + placeholders écocup)."""
     prod = Product.query.filter(func.lower(Product.name) == "coreff ambrée").first()
     if prod:
         v = Variant.query.filter_by(product_id=prod.id, size_l=22).first()
@@ -478,7 +478,7 @@ def create_app():
                     current_eq = sum_equipment_for_client(client_id)
                     for k in EQ_KEYS:
                         if k == "ecocup":
-                            continue  # géré plus bas
+                            continue  # écocup géré séparément
                         want = int(eq.get(k, 0) or 0)
                         if want > current_eq.get(k, 0):
                             flash(f"Impossible de reprendre {want} {k}(s) — dispo: {current_eq.get(k, 0)}.", "danger")
@@ -501,11 +501,11 @@ def create_app():
             db.session.add(main_m)
             db.session.flush()  # id dispo
 
-            # --- Règles Ecocup (finales) ---
+            # --- Règles Ecocup (définitives : frais uniquement à la reprise) ---
             var_wash, var_loss = get_or_create_ecocup_variants()
 
             if mtype == 'OUT':
-                # Aucun frais écocup au prêt
+                # Aucun frais écocup à la livraison
                 pass
 
             if mtype in ('IN', 'DEFECT'):
@@ -546,10 +546,10 @@ def create_app():
                         notes=f"Ecocup manquant {missing}u (lié au mouvement #{main_m.id}) {FLAG_LOSS}"
                     ))
 
-                # (3) Ajuster la note du mouvement principal pour tracer totals retirés
+                # (3) Ajuster l'équipement: retirer tout ce qui était chez le client (rendus + manquants)
                 if (returned + missing) > 0:
                     eq_adj = dict(eq)
-                    eq_adj["ecocup"] = returned + missing  # retire tout ce qui restait
+                    eq_adj["ecocup"] = returned + missing  # retire tout ce qui restait chez le client
                     extra = []
                     if returned > 0: extra.append(f"{returned} lavés")
                     if missing > 0: extra.append(f"{missing} manquants")
@@ -560,6 +560,7 @@ def create_app():
             flash('Mouvement enregistré ✅', "success")
             return redirect(url_for('client_detail', client_id=client_id))
 
+        # GET
         clients = Client.query.order_by(Client.name).all()
         variants = db.session.query(Variant.id, Product.name, Variant.size_l, Variant.price_ttc) \
                              .join(Product).order_by(Product.name, Variant.size_l).all()
