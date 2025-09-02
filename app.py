@@ -64,25 +64,37 @@ def create_app():
         seed_if_empty()
 
     @app.errorhandler(404)
-    def not_found(e): 
+    def not_found(e):
         return render_template('404.html'), 404
 
     @app.errorhandler(500)
-    def server_err(e): 
+    def server_err(e):
         return render_template('500.html'), 500
 
     @app.route('/')
     def index():
+        # Récap par client : stock (nb de fûts), consignes en jeu, valeur "bière" en jeu
+        # - consignes : OUT +, IN -
+        # - bière : OUT + (qty*unit_price), IN - (qty*unit_price). unit_price NULL => 0.
+        beer_value_expr = case(
+            (Movement.type == 'OUT', Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)),
+            else_= -1 * Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)
+        )
+        deposit_value_expr = case(
+            (Movement.type == 'OUT', Movement.qty * Movement.deposit_per_keg),
+            else_= -1 * Movement.qty * Movement.deposit_per_keg
+        )
+
         rows = db.session.query(
-            Client.id, Client.name,
-            func.coalesce(func.sum(case((Movement.type=='OUT', Movement.qty), else_=0)),0).label('out_qty'),
-            func.coalesce(func.sum(case((Movement.type=='IN', Movement.qty), else_=0)),0).label('in_qty'),
-            func.coalesce(func.sum(
-                case((Movement.type=='OUT', Movement.qty*Movement.deposit_per_keg),
-                     else_=-Movement.qty*Movement.deposit_per_keg)
-            ),0.0).label('deposit_in_play')
-        ).join(Movement, Movement.client_id==Client.id, isouter=True)\
+            Client.id,
+            Client.name,
+            func.coalesce(func.sum(case((Movement.type == 'OUT', Movement.qty), else_=0)), 0).label('out_qty'),
+            func.coalesce(func.sum(case((Movement.type == 'IN', Movement.qty), else_=0)), 0).label('in_qty'),
+            func.coalesce(func.sum(deposit_value_expr), 0.0).label('deposit_in_play'),
+            func.coalesce(func.sum(beer_value_expr), 0.0).label('beer_in_play'),
+        ).join(Movement, Movement.client_id == Client.id, isouter=True) \
          .group_by(Client.id, Client.name).order_by(Client.name).all()
+
         return render_template('index.html', rows=rows)
 
     @app.route('/clients')
@@ -92,19 +104,45 @@ def create_app():
     @app.route('/client/<int:client_id>')
     def client_detail(client_id):
         client = Client.query.get_or_404(client_id)
+
+        # Stock par variant (n’affiche que les lignes non nulles dans le template)
         q = db.session.query(
             Variant.id, Product.name.label('product_name'), Variant.size_l,
-            func.coalesce(func.sum(case((Movement.type=='OUT', Movement.qty), else_=0)),0).label('out_qty'),
-            func.coalesce(func.sum(case((Movement.type=='IN', Movement.qty), else_=0)),0).label('in_qty'),
+            func.coalesce(func.sum(case((Movement.type == 'OUT', Movement.qty), else_=0)), 0).label('out_qty'),
+            func.coalesce(func.sum(case((Movement.type == 'IN', Movement.qty), else_=0)), 0).label('in_qty'),
             func.min(Variant.price_ttc).label('catalog_price')
-        ).join(Product, Product.id==Variant.product_id)\
-         .join(Movement, Movement.variant_id==Variant.id, isouter=True)\
-         .filter((Movement.client_id==client_id) | (Movement.client_id==None))\
-         .group_by(Variant.id, Product.name, Variant.size_l).order_by(Product.name, Variant.size_l)
+        ).join(Product, Product.id == Variant.product_id) \
+         .join(Movement, Movement.variant_id == Variant.id, isouter=True) \
+         .filter((Movement.client_id == client_id) | (Movement.client_id == None)) \
+         .group_by(Variant.id, Product.name, Variant.size_l) \
+         .order_by(Product.name, Variant.size_l)
         rows = q.all()
-        return render_template('client_detail.html', client=client, rows=rows)
 
-    @app.route('/movement/new', methods=['GET','POST'])
+        # Historique complet des mouvements (même si stock = 0)
+        movements = Movement.query.filter_by(client_id=client_id).order_by(Movement.created_at.desc()).all()
+
+        # Totaux “en jeu” pour ce client (bière / consignes)
+        beer_value_expr = case(
+            (Movement.type == 'OUT', Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)),
+            else_= -1 * Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)
+        )
+        deposit_value_expr = case(
+            (Movement.type == 'OUT', Movement.qty * Movement.deposit_per_keg),
+            else_= -1 * Movement.qty * Movement.deposit_per_keg
+        )
+        totals = db.session.query(
+            func.coalesce(func.sum(beer_value_expr), 0.0),
+            func.coalesce(func.sum(deposit_value_expr), 0.0)
+        ).filter(Movement.client_id == client_id).one()
+        beer_in_play, deposit_in_play = totals
+
+        return render_template('client_detail.html',
+                               client=client, rows=rows,
+                               movements=movements,
+                               beer_in_play=beer_in_play,
+                               deposit_in_play=deposit_in_play)
+
+    @app.route('/movement/new', methods=['GET', 'POST'])
     def movement_new():
         if request.method == 'POST':
             variant_id = int(request.form['variant_id'])
@@ -113,13 +151,13 @@ def create_app():
             unit_price = float(unit_price_raw) if unit_price_raw else (v.price_ttc if v.price_ttc is not None else None)
 
             m = Movement(
-                type=request.form['type'],
+                type=request.form['type'],  # 'OUT' (= Livraison) ou 'IN' (= Reprise)
                 client_id=int(request.form['client_id']),
                 variant_id=variant_id,
                 qty=int(request.form.get('qty', 1)),
                 unit_price_ttc=unit_price,
                 deposit_per_keg=float(request.form.get('deposit_per_keg', 30) or 30),
-                notes=(request.form.get('notes','').strip() or None)
+                notes=(request.form.get('notes', '').strip() or None)
             )
             db.session.add(m)
             db.session.commit()
@@ -127,13 +165,13 @@ def create_app():
             return redirect(url_for('client_detail', client_id=m.client_id))
 
         clients = Client.query.order_by(Client.name).all()
-        variants = db.session.query(Variant.id, Product.name, Variant.size_l, Variant.price_ttc)\
+        variants = db.session.query(Variant.id, Product.name, Variant.size_l, Variant.price_ttc) \
                              .join(Product).order_by(Product.name, Variant.size_l).all()
         return render_template('movement_new.html', clients=clients, variants=variants)
 
     @app.route('/products')
     def products():
-        rows = db.session.query(Product.name, Variant.size_l, Variant.price_ttc)\
+        rows = db.session.query(Product.name, Variant.size_l, Variant.price_ttc) \
                          .join(Variant).order_by(Product.name, Variant.size_l).all()
         return render_template('products.html', rows=rows)
 
