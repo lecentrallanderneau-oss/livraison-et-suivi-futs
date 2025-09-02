@@ -15,6 +15,7 @@
   <span class="badge bg-warning text-dark">Consignes en jeu: {{ '%.0f'|format(deposit_in_play or 0) }} €</span>
 </div>
 
+<!-- Matériel en cours (inclut Ecocup) -->
 <div class="card p-2 mb-3">
   <div class="fw-semibold mb-2">Matériel en cours chez ce client</div>
   <div class="d-flex flex-wrap gap-2 small">
@@ -22,6 +23,7 @@
     <span class="badge bg-dark-subtle text-dark">CO₂: {{ equipment_totals.co2 }}</span>
     <span class="badge bg-dark-subtle text-dark">Comptoir(s): {{ equipment_totals.comptoir }}</span>
     <span class="badge bg-dark-subtle text-dark">Tonnelle(s): {{ equipment_totals.tonnelle }}</span>
+    <span class="badge bg-dark-subtle text-dark">Ecocup: {{ equipment_totals.ecocup }}</span>
   </div>
 </div>
 
@@ -31,6 +33,7 @@
 </div>
 
 <h6 class="mb-2">Stock actuel (par produit)</h6>
+<div class="table-responsive">
 <table class="table table-sm align-middle bg-white">
   <thead><tr><th>Produit</th><th>Format</th><th class="text-end">Chez eux</th></tr></thead>
   <tbody>
@@ -43,9 +46,12 @@
       <td class="text-end"><span class="badge bg-secondary">{{ in_place }}</span></td>
     </tr>
     {% endif %}
+  {% else %}
+    <tr><td colspan="3" class="text-center text-muted">Aucun stock en cours</td></tr>
   {% endfor %}
   </tbody>
 </table>
+</div>
 
 <h6 class="mt-4 mb-2">Historique des mouvements</h6>
 <div class="table-responsive">
@@ -95,12 +101,13 @@
         <td class="text-end">{{ safe_deposit|float|round(2) }}</td>
         <td class="text-end">{{ deposit_total|float|round(2) }}</td>
         <td class="small">
-          {% set any = (eq.tireuse or eq.co2 or eq.comptoir or eq.tonnelle) %}
+          {% set any = (eq.tireuse or eq.co2 or eq.comptoir or eq.tonnelle or eq.ecocup) %}
           {% if any %}
             {% if eq.tireuse %}Tireuse: {{ eq.tireuse }}{% endif %}
             {% if eq.co2 %}{% if eq.tireuse %} • {% endif %}CO₂: {{ eq.co2 }}{% endif %}
             {% if eq.comptoir %}{% if eq.tireuse or eq.co2 %} • {% endif %}Comptoir: {{ eq.comptoir }}{% endif %}
             {% if eq.tonnelle %}{% if eq.tireuse or eq.co2 or eq.comptoir %} • {% endif %}Tonnelle: {{ eq.tonnelle }}{% endif %}
+            {% if eq.ecocup %}{% if eq.tireuse or eq.co2 or eq.comptoir or eq.tonnelle %} • {% endif %}Ecocup: {{ eq.ecocup }}{% endif %}
           {% else %}—{% endif %}
         </td>
         <td>{{ human or '' }}</td>
