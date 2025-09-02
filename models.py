@@ -32,7 +32,6 @@ class Variant(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     product_id = db.Column(db.Integer, db.ForeignKey("product.id"), nullable=False)
     volume_l = db.Column(db.Integer, nullable=False)  # ex: 20, 22, 30
-    # consigne sur le fut (si tu utilises une consigne fut — sinon laisse 0)
     deposit_eur = db.Column(db.Integer, default=0)
 
     product = db.relationship("Product", backref="variants")
@@ -48,7 +47,7 @@ class Movement(db.Model):
     client_id = db.Column(db.Integer, db.ForeignKey("client.id"), nullable=False)
     variant_id = db.Column(db.Integer, db.ForeignKey("variant.id"), nullable=False)
 
-    # "OUT" = livraison / sortie ; "IN" = reprise / entrée
+    # "OUT" = livraison ; "IN" = reprise
     type = db.Column(db.String(10), nullable=False)
     quantity = db.Column(db.Integer, nullable=False, default=1)
 
