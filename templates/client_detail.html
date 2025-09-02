@@ -2,6 +2,13 @@
 {% block title %}{{ client.name }}{% endblock %}
 {% block content %}
 <h5 class="mb-3">{{ client.name }}</h5>
+
+<div class="mb-3">
+  <span class="badge bg-info text-dark me-2">Bière en jeu: {{ '%.0f'|format(beer_in_play) }} €</span>
+  <span class="badge bg-warning text-dark">Consignes en jeu: {{ '%.0f'|format(deposit_in_play) }} €</span>
+</div>
+
+<h6 class="mb-2">Stock actuel (par produit)</h6>
 <table class="table table-sm align-middle bg-white">
   <thead><tr><th>Produit</th><th>Format</th><th class="text-end">Chez eux</th></tr></thead>
   <tbody>
@@ -17,5 +24,52 @@
   {% endfor %}
   </tbody>
 </table>
-<a class="btn btn-primary w-100 btn-lg" href="{{ url_for('movement_new') }}">+ Enregistrer un mouvement</a>
+
+<h6 class="mt-4 mb-2">Historique des mouvements</h6>
+<div class="table-responsive">
+<table class="table table-sm bg-white">
+  <thead>
+    <tr>
+      <th>Date</th>
+      <th>Type</th>
+      <th>Produit</th>
+      <th class="text-end">Qté</th>
+      <th class="text-end">Prix unitaire bière (€)</th>
+      <th class="text-end">Total bière (€)</th>
+      <th class="text-end">Consigne / fût (€)</th>
+      <th class="text-end">Total consigne (€)</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for m in movements %}
+      {% set sign = 1 if m.type == 'OUT' else -1 %}
+      {% set unit = m.unit_price_ttc if m.unit_price_ttc is not none else 0 %}
+      {% set beer_total = sign * m.qty * unit %}
+      {% set deposit_total = sign * m.qty * m.deposit_per_keg %}
+      <tr>
+        <td>{{ m.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+        <td>
+          {% if m.type == 'OUT' %}
+            <span class="badge bg-primary">Livraison</span>
+          {% else %}
+            <span class="badge bg-success">Reprise</span>
+          {% endif %}
+        </td>
+        <td>{{ m.variant.product.name }} — {{ m.variant.size_l }} L</td>
+        <td class="text-end">{{ m.qty }}</td>
+        <td class="text-end">{{ unit|float|round(2) }}</td>
+        <td class="text-end">{{ beer_total|float|round(2) }}</td>
+        <td class="text-end">{{ m.deposit_per_keg|float|round(2) }}</td>
+        <td class="text-end">{{ deposit_total|float|round(2) }}</td>
+        <td>{{ m.notes or '' }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="9" class="text-center text-muted">Aucun mouvement enregistré</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<a class="btn btn-primary w-100 btn-lg mt-3" href="{{ url_for('movement_new') }}">+ Enregistrer une livraison / reprise</a>
 {% endblock %}
