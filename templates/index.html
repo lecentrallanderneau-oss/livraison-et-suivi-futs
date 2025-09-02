@@ -14,7 +14,7 @@
         <span class="text-nowrap">
           <span class="badge bg-secondary me-2">{{ in_place }} fût(s)</span>
           <span class="badge bg-info text-dark me-2">Bière facturée: {{ '%.0f'|format(r.beer_billed_cum or 0) }} €</span>
-          <span class="badge bg-purple text-light me-2" style="background:#6f42c1">Gobelets (lav+pertes): {{ '%.2f'|format(ec.total or 0) }} €</span>
+          <span class="badge text-light me-2" style="background:#6f42c1">Gobelets (lav+pertes): {{ '%.2f'|format(ec.total or 0) }} €</span>
           <span class="badge bg-warning text-dark">Consignes: {{ '%.0f'|format(r.deposit_in_play or 0) }} €</span>
         </span>
       </div>
