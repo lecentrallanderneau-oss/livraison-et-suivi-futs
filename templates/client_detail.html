@@ -1,117 +1,24 @@
 {% extends "base.html" %}
-{% block title %}{{ client.name }}{% endblock %}
+{% block title %}Clients{% endblock %}
 {% block content %}
-<h5 class="mb-1">{{ client.name }}</h5>
-<div class="text-muted small mb-2">
-  {% if last_delivery_at %}Dernière livraison: {{ last_delivery_at.strftime('%d/%m/%Y %H:%M') }}{% else %}Aucune livraison{% endif %}
-  &nbsp;•&nbsp;
-  {% if last_pickup_at %}Dernière reprise: {{ last_pickup_at.strftime('%d/%m/%Y %H:%M') }}{% else %}Aucune reprise{% endif %}
-</div>
+<h5 class="mb-3">Clients</h5>
 
-<div class="mb-3">
-  <span class="badge bg-secondary me-2">Fûts en cours chez eux: {{ in_place_total or 0 }}</span>
-  <span class="badge bg-secondary me-2">Fûts livrés cumulés: {{ delivered_qty_cum or 0 }}</span>
-  <span class="badge bg-info text-dark me-2">Bière facturée cumulée: {{ '%.0f'|format(beer_billed_cum or 0) }} €</span>
-  <span class="badge bg-warning text-dark">Consignes en jeu: {{ '%.0f'|format(deposit_in_play or 0) }} €</span>
-</div>
-
-<div class="card p-2 mb-3">
-  <div class="fw-semibold mb-2">Matériel en cours chez ce client</div>
-  <div class="d-flex flex-wrap gap-2 small">
-    <span class="badge bg-dark-subtle text-dark">Tireuse(s): {{ equipment_totals.tireuse }}</span>
-    <span class="badge bg-dark-subtle text-dark">CO₂: {{ equipment_totals.co2 }}</span>
-    <span class="badge bg-dark-subtle text-dark">Comptoir(s): {{ equipment_totals.comptoir }}</span>
-    <span class="badge bg-dark-subtle text-dark">Tonnelle(s): {{ equipment_totals.tonnelle }}</span>
+<form method="post" class="card p-3 bg-white mb-3">
+  <label class="form-label">Ajouter un client</label>
+  <div class="input-group">
+    <input type="text" name="name" class="form-control form-control-lg" placeholder="Nom du client" required>
+    <button class="btn btn-primary btn-lg">Ajouter</button>
   </div>
-</div>
+</form>
 
-<div class="d-flex gap-2 mb-3">
-  <a class="btn btn-outline-primary" href="{{ url_for('movement_new', client_id=client.id) }}">+ Livraison / Reprise ici</a>
-  <a class="btn btn-outline-secondary" href="{{ url_for('clients') }}">Changer de client</a>
-</div>
-
-<h6 class="mb-2">Stock actuel (par produit)</h6>
-<table class="table table-sm align-middle bg-white">
-  <thead><tr><th>Produit</th><th>Format</th><th class="text-end">Chez eux</th></tr></thead>
-  <tbody>
-  {% for r in rows %}
-    {% set in_place = (r.out_qty - r.in_qty) %}
-    {% if in_place != 0 %}
-    <tr>
-      <td>{{ r.product_name }}</td>
-      <td>{{ r.size_l }} L</td>
-      <td class="text-end"><span class="badge bg-secondary">{{ in_place }}</span></td>
-    </tr>
-    {% endif %}
+<ul class="list-group">
+  {% for c in clients %}
+  <li class="list-group-item d-flex justify-content-between align-items-center">
+    <a class="text-decoration-none" href="{{ url_for('client_detail', client_id=c.id) }}">{{ c.name }}</a>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('movement_new', client_id=c.id) }}">+ Livraison / Reprise ici</a>
+  </li>
+  {% else %}
+  <li class="list-group-item text-muted">Aucun client</li>
   {% endfor %}
-  </tbody>
-</table>
-
-<h6 class="mt-4 mb-2">Historique des mouvements</h6>
-<div class="table-responsive">
-<table class="table table-sm bg-white align-middle">
-  <thead>
-    <tr>
-      <th>Date</th>
-      <th>Type</th>
-      <th>Produit</th>
-      <th class="text-end">Qté</th>
-      <th class="text-end">Prix unitaire bière (€)</th>
-      <th class="text-end">Total bière (€)</th>
-      <th class="text-end">Consigne / fût (€)</th>
-      <th class="text-end">Total consigne (€)</th>
-      <th>Matériel</th>
-      <th>Notes</th>
-      <th class="text-end">Actions</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for m, eq, human in movements %}
-      {% set safe_unit = (m.unit_price_ttc or 0) %}
-      {% set safe_deposit = (m.deposit_per_keg or 0) %}
-      {% set beer_total = (m.qty * safe_unit) if m.type == 'OUT' else (-(m.qty * safe_unit)) if m.type == 'DEFECT' else 0 %}
-      {% set deposit_total = (m.qty * safe_deposit) if m.type == 'OUT' else (-(m.qty * safe_deposit)) %}
-      <tr>
-        <td>{{ m.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
-        <td>
-          {% if m.type == 'OUT' %}
-            <span class="badge bg-primary">Livraison</span>
-          {% elif m.type == 'IN' %}
-            <span class="badge bg-success">Reprise</span>
-          {% elif m.type == 'DEFECT' %}
-            <span class="badge bg-danger">Reprise défectueux</span>
-          {% endif %}
-        </td>
-        <td>
-          {% if m.variant and m.variant.product %}
-            {{ m.variant.product.name }} — {{ m.variant.size_l }} L
-          {% else %}
-            <em class="text-muted">[référence supprimée]</em>
-          {% endif %}
-        </td>
-        <td class="text-end">{{ m.qty }}</td>
-        <td class="text-end">{{ safe_unit|float|round(2) }}</td>
-        <td class="text-end">{{ beer_total|float|round(2) }}</td>
-        <td class="text-end">{{ safe_deposit|float|round(2) }}</td>
-        <td class="text-end">{{ deposit_total|float|round(2) }}</td>
-        <td class="small">
-          {% set any = (eq.tireuse or eq.co2 or eq.comptoir or eq.tonnelle) %}
-          {% if any %}
-            {% if eq.tireuse %}Tireuse: {{ eq.tireuse }}{% endif %}
-            {% if eq.co2 %}{% if eq.tireuse %} • {% endif %}CO₂: {{ eq.co2 }}{% endif %}
-            {% if eq.comptoir %}{% if eq.tireuse or eq.co2 %} • {% endif %}Comptoir: {{ eq.comptoir }}{% endif %}
-            {% if eq.tonnelle %}{% if eq.tireuse or eq.co2 or eq.comptoir %} • {% endif %}Tonnelle: {{ eq.tonnelle }}{% endif %}
-          {% else %}—{% endif %}
-        </td>
-        <td>{{ human or '' }}</td>
-        <td class="text-end">
-          <a class="btn btn-sm btn-outline-danger" href="{{ url_for('movement_confirm_delete', movement_id=m.id) }}">Supprimer…</a>
-        </td>
-      </tr>
-    {% else %}
-      <tr><td colspan="11" class="text-center text-muted">Aucun mouvement enregistré</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
+</ul>
 {% endblock %}
