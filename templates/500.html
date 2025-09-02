@@ -1,8 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Erreur{% endblock %}
+{% block title %}Erreur serveur{% endblock %}
 {% block content %}
-<div class="text-center py-5">
-  <h3>Oups, une erreur s’est produite.</h3>
-  <p><a href="{{ url_for('index') }}">Retour à l’accueil</a></p>
-</div>
+<div class="alert alert-danger">Oups, une erreur est survenue.</div>
 {% endblock %}
