@@ -15,16 +15,22 @@
   <nav class="navbar bg-white border-bottom mb-3">
     <div class="container-fluid">
       <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">🍺 Fûts</a>
-      <a class="btn btn-outline-primary" href="{{ url_for('movement_new') }}">+ Mouvement</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('movement_new') }}">+ Livraisons / Reprise</a>
     </div>
   </nav>
-  <main class="container">{% with messages = get_flashed_messages() %}
-    {% if messages %}<div class="alert alert-success">{{ messages[0] }}</div>{% endif %}
-  {% endwith %}
-  {% block content %}{% endblock %}</main>
+  <main class="container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for cat, msg in messages %}
+          <div class="alert alert-{{ 'success' if cat=='message' else cat }} mb-3">{{ msg }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
   <div class="sticky-bottom-bar">
     <div class="d-flex gap-2">
-      <a class="btn btn-primary flex-fill btn-lg" href="{{ url_for('movement_new') }}">+ Sortie / Reprise</a>
+      <a class="btn btn-primary flex-fill btn-lg" href="{{ url_for('movement_new') }}">+ Livraisons / Reprise</a>
       <a class="btn btn-outline-secondary flex-fill btn-lg" href="{{ url_for('clients') }}">Clients</a>
     </div>
   </div>
