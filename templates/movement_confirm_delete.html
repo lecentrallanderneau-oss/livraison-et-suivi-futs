@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Confirmer suppression{% endblock %}
+{% block content %}
+<div class="card p-3 bg-white">
+  <h5 class="mb-3">Confirmer la suppression</h5>
+  <p>Tu vas supprimer définitivement ce mouvement :</p>
+  <ul>
+    <li><strong>Date :</strong> {{ m.created_at.strftime('%d/%m/%Y %H:%M') }}</li>
+    <li><strong>Client :</strong> {{ m.client.name }}</li>
+    <li><strong>Type :</strong> {{ 'Livraison' if m.type=='OUT' else 'Reprise' }}</li>
+    <li><strong>Produit :</strong> {{ m.variant.product.name }} — {{ m.variant.size_l }} L</li>
+    <li><strong>Quantité :</strong> {{ m.qty }}</li>
+    <li><strong>Prix bière unitaire :</strong> {{ (m.unit_price_ttc or 0)|float|round(2) }} €</li>
+    <li><strong>Consigne / fût :</strong> {{ m.deposit_per_keg|float|round(2) }} €</li>
+    <li><strong>Notes :</strong> {{ m.notes or '—' }}</li>
+  </ul>
+
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary flex-fill" href="{{ url_for('client_detail', client_id=m.client_id) }}">Annuler</a>
+    <form method="post" action="{{ url_for('movement_delete', movement_id=m.id) }}" class="flex-fill">
+      <button class="btn btn-danger w-100">Oui, supprimer</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
