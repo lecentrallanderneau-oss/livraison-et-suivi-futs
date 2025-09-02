@@ -228,27 +228,32 @@ def create_app():
     # --------- Routes ----------
     @app.route('/')
     def index():
+        # IMPORTANT: on ignore les variants 0L pour le stock fûts (matériel/écocup)
         last_delivery = func.max(case((Movement.type == 'OUT', Movement.created_at), else_=None))
         last_pickup   = func.max(case((or_(Movement.type == 'IN', Movement.type == 'DEFECT'), Movement.created_at), else_=None))
 
-        total_delivered_qty = func.coalesce(func.sum(case((Movement.type == 'OUT', Movement.qty), else_=0)), 0)
+        total_delivered_qty = func.coalesce(func.sum(case(
+            (and_(Movement.type == 'OUT', Variant.size_l > 0), Movement.qty)
+        , else_=0)), 0)
+
         total_beer_billed   = func.coalesce(func.sum(BEER_VALUE_EXPR), 0.0)
 
         rows = db.session.query(
             Client.id, Client.name,
-            func.coalesce(func.sum(case((Movement.type == 'OUT', Movement.qty), else_=0)), 0).label('out_qty'),
-            func.coalesce(func.sum(case((or_(Movement.type == 'IN', Movement.type == 'DEFECT'), Movement.qty), else_=0)), 0).label('in_qty'),
+            func.coalesce(func.sum(case((and_(Movement.type == 'OUT', Variant.size_l > 0), Movement.qty), else_=0)), 0).label('out_qty'),
+            func.coalesce(func.sum(case((and_(or_(Movement.type == 'IN', Movement.type == 'DEFECT'), Variant.size_l > 0), Movement.qty), else_=0)), 0).label('in_qty'),
             func.coalesce(func.sum(DEPOSIT_VALUE_EXPR), 0.0).label('deposit_in_play'),
             func.coalesce(func.sum(BEER_VALUE_EXPR), 0.0).label('beer_billed_cum'),
             last_delivery.label('last_delivery_at'),
             last_pickup.label('last_pickup_at'),
             total_delivered_qty.label('delivered_qty_cum'),
-            total_beer_billed.label('beer_billed_total')
+            func.coalesce(func.sum(BEER_VALUE_EXPR), 0.0).label('beer_billed_total')
         ).join(Movement, Movement.client_id == Client.id, isouter=True) \
+         .join(Variant, Variant.id == Movement.variant_id, isouter=True) \
          .group_by(Client.id, Client.name) \
          .order_by(Client.name).all()
 
-        # Matériel prêté par client
+        # Matériel prêté par client (inclut Ecocup)
         equipment_by_client = {c.id: {k: 0 for k in EQ_KEYS} for c in Client.query.all()}
         for m in Movement.query.with_entities(Movement.client_id, Movement.type, Movement.notes).all():
             if m.client_id is None:
@@ -287,36 +292,51 @@ def create_app():
     def client_detail(client_id):
         client = Client.query.get_or_404(client_id)
 
+        # STOCK PAR PRODUIT — on EXCLUT variants 0L
         q = db.session.query(
             Variant.id, Product.name.label('product_name'), Variant.size_l,
-            func.coalesce(func.sum(case((Movement.type == 'OUT', Movement.qty), else_=0)), 0).label('out_qty'),
-            func.coalesce(func.sum(case((or_(Movement.type == 'IN', Movement.type == 'DEFECT'), Movement.qty), else_=0)), 0).label('in_qty'),
+            func.coalesce(func.sum(case((and_(Movement.type == 'OUT', Variant.size_l > 0), Movement.qty), else_=0)), 0).label('out_qty'),
+            func.coalesce(func.sum(case((and_(or_(Movement.type == 'IN', Movement.type == 'DEFECT'), Variant.size_l > 0), Movement.qty), else_=0)), 0).label('in_qty'),
             func.min(Variant.price_ttc).label('catalog_price')
         ).join(Product, Product.id == Variant.product_id) \
          .join(Movement, Movement.variant_id == Variant.id, isouter=True) \
-         .filter((Movement.client_id == client_id) | (Movement.client_id == None)) \
+         .filter(Variant.size_l > 0, Movement.client_id == client_id) \
          .group_by(Variant.id, Product.name, Variant.size_l) \
          .order_by(Product.name, Variant.size_l)
         rows = q.all()
 
+        # Historique détaillé (inchangé)
         movements = Movement.query.filter_by(client_id=client_id).order_by(Movement.created_at.desc()).all()
         display_movs = []
+        ecocup_events = []
         for m in movements:
             eq, human = unpack_equipment(m.notes)
             display_movs.append((m, eq, human))
+            if (eq.get('ecocup') or 0) != 0:
+                ecocup_events.append({
+                    "date": m.created_at,
+                    "type": m.type,
+                    "qty": int(eq.get('ecocup') or 0),
+                    "note": human
+                })
 
+        # Totaux
         beer_billed_cum = db.session.query(func.coalesce(func.sum(BEER_VALUE_EXPR), 0.0)) \
                                     .filter(Movement.client_id == client_id).scalar()
-
         deposit_in_play = db.session.query(func.coalesce(func.sum(DEPOSIT_VALUE_EXPR), 0.0)) \
                                     .filter(Movement.client_id == client_id).scalar()
-
         delivered_qty_cum = db.session.query(
-            func.coalesce(func.sum(case((Movement.type == 'OUT', Movement.qty), else_=0)), 0)
-        ).filter(Movement.client_id == client_id).scalar()
-
-        in_place_total = db.session.query(func.coalesce(func.sum(STOCK_EXPR), 0)) \
-                                   .filter(Movement.client_id == client_id).scalar()
+            func.coalesce(func.sum(case((and_(Movement.type == 'OUT', Variant.size_l > 0), Movement.qty), else_=0)), 0)
+        ).join(Variant, Variant.id == Movement.variant_id) \
+         .filter(Movement.client_id == client_id).scalar()
+        in_place_total = db.session.query(func.coalesce(func.sum(
+            case(
+                (and_(Movement.type == 'OUT', Variant.size_l > 0), Movement.qty),
+                (and_(or_(Movement.type == 'IN', Movement.type == 'DEFECT'), Variant.size_l > 0), -Movement.qty),
+                else_=0
+            )
+        ), 0)).join(Variant, Variant.id == Movement.variant_id) \
+         .filter(Movement.client_id == client_id).scalar()
 
         equipment_totals = sum_equipment_for_client(client_id)
 
@@ -327,6 +347,7 @@ def create_app():
 
         return render_template('client_detail.html',
                                client=client, rows=rows, movements=display_movs,
+                               ecocup_events=ecocup_events,
                                beer_billed_cum=beer_billed_cum,
                                deposit_in_play=deposit_in_play,
                                delivered_qty_cum=delivered_qty_cum,
@@ -426,15 +447,16 @@ def create_app():
                 deposit_per_keg = 0.0
             else:
                 if custom_name:
-                    unit_price = float(unit_price_raw) if unit_price_raw else unit_price  # unit_price défini plus haut
+                    unit_price = float(unit_price_raw) if unit_price_raw else unit_price  # défini plus haut
                 else:
                     unit_price = float(unit_price_raw) if unit_price_raw else (variant.price_ttc if variant and variant.price_ttc is not None else 0.0)
 
-            # --- Validations anti-négatif pour fûts et matériel ---
+            # --- Validations anti-négatif pour fûts et matériel (hors Ecocup géré à part) ---
             if mtype in ('IN', 'DEFECT'):
                 if qty > 0:
                     in_place_variant = db.session.query(func.coalesce(func.sum(STOCK_EXPR), 0)) \
-                        .filter(and_(Movement.client_id == client_id, Movement.variant_id == variant_id)).scalar()
+                        .join(Variant, Variant.id == Movement.variant_id) \
+                        .filter(and_(Movement.client_id == client_id, Movement.variant_id == variant_id, Variant.size_l > 0)).scalar()
                     if qty > max(in_place_variant, 0):
                         flash(f"Impossible de reprendre {qty} fût(s) — stock dispo: {max(in_place_variant, 0)}.", "danger")
                         return redirect(url_for('movement_new', client_id=client_id))
@@ -442,8 +464,7 @@ def create_app():
                     current_eq = sum_equipment_for_client(client_id)
                     for k in EQ_KEYS:
                         if k == "ecocup":
-                            # on gère ecocup plus bas (car manquants facturés)
-                            continue
+                            continue  # géré plus bas
                         want = int(eq.get(k, 0) or 0)
                         if want > current_eq.get(k, 0):
                             flash(f"Impossible de reprendre {want} {k}(s) — dispo: {current_eq.get(k, 0)}.", "danger")
@@ -464,13 +485,12 @@ def create_app():
                 notes=notes
             )
             db.session.add(main_m)
-            db.session.flush()  # id dispo si besoin
+            db.session.flush()  # id dispo
 
             # --- Règles Ecocup ---
             var_wash, var_loss = get_or_create_ecocup_variants()
 
             if mtype == 'OUT':
-                # Facture lavage 0,10 €/écocup prêté (si eq_ecocup > 0)
                 ec_out = eq.get("ecocup", 0) or 0
                 if ec_out > 0:
                     db.session.add(Movement(
@@ -485,17 +505,15 @@ def create_app():
                     ))
 
             if mtype in ('IN', 'DEFECT'):
-                # On autorise à "régler" les manquants: si le client rend moins que ce qu'il a.
                 current_ec = sum_equipment_for_client(client_id).get("ecocup", 0)
                 returned = eq.get("ecocup", 0) or 0
                 if returned > current_ec:
-                    # clamp (normalement bloqué avant, mais sécurité)
-                    returned = current_ec
+                    returned = current_ec  # clamp sécurité
 
                 missing = max(0, current_ec - returned)
 
                 if missing > 0:
-                    # 1) Facturer 1€ par gobelet manquant
+                    # Facture 1€ par gobelet manquant
                     db.session.add(Movement(
                         created_at=created_at,
                         type='OUT',
@@ -506,9 +524,7 @@ def create_app():
                         deposit_per_keg=0.0,
                         notes=f"Ecocup manquant {missing}u (lié au mouvement #{main_m.id})"
                     ))
-                    # 2) Ajuster l'équipement pour remettre à zéro chez le client :
-                    #    on transforme la note du mouvement principal pour indiquer
-                    #    qu'on "retire" returned + missing côté matériel.
+                    # Ajustement de la note pour tracer l’info
                     eq_adj = dict(eq)
                     eq_adj["ecocup"] = returned + missing
                     main_m.notes = pack_equipment(human_notes + ((" — dont " + str(missing) + " manquants") if human_notes else f"Dont {missing} manquants"), eq_adj)
