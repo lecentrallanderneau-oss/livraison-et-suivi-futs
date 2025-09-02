@@ -2,37 +2,42 @@
 {% block title %}Vue d’ensemble{% endblock %}
 {% block content %}
 <h5 class="mb-3">Stock par client</h5>
+
 <ul class="list-group">
   {% for r in rows %}
-  {% set in_place = (r.out_qty - r.in_qty) %}
-  {% set eq = equipment_by_client.get(r.id, {}) %}
-  <li class="list-group-item">
-    <div class="d-flex justify-content-between align-items-center">
-      <a class="text-decoration-none fw-semibold" href="{{ url_for('client_detail', client_id=r.id) }}">{{ r.name }}</a>
-      <span class="text-nowrap">
-        <span class="badge bg-secondary me-2">{{ in_place }} fût(s)</span>
-        <span class="badge bg-info text-dark me-2">Bière facturée: {{ '%.0f'|format(r.beer_billed_cum) }} €</span>
-        <span class="badge bg-warning text-dark">Consignes: {{ '%.0f'|format(r.deposit_in_play) }} €</span>
-      </span>
-    </div>
+    {% set in_place = (r.out_qty - r.in_qty) %}
+    {% set eq = equipment_by_client.get(r.id, {}) %}
+    <li class="list-group-item">
+      <div class="d-flex justify-content-between align-items-center">
+        <a class="text-decoration-none fw-semibold" href="{{ url_for('client_detail', client_id=r.id) }}">{{ r.name }}</a>
+        <span class="text-nowrap">
+          <span class="badge bg-secondary me-2">{{ in_place }} fût(s)</span>
+          <span class="badge bg-info text-dark me-2">Bière facturée: {{ '%.0f'|format(r.beer_billed_cum or 0) }} €</span>
+          <span class="badge bg-warning text-dark">Consignes: {{ '%.0f'|format(r.deposit_in_play or 0) }} €</span>
+        </span>
+      </div>
 
-    <div class="small text-muted mt-1">
-      Livraisons cumulées: {{ r.delivered_qty_cum or 0 }} fût(s), total bière: {{ '%.0f'|format(r.beer_billed_total or 0) }} €
-    </div>
+      <div class="small text-muted mt-1">
+        Livraisons cumulées: {{ r.delivered_qty_cum or 0 }} fût(s), total bière: {{ '%.0f'|format(r.beer_billed_total or 0) }} €
+      </div>
 
-    <div class="small text-muted">
-      {% if r.last_delivery_at %}Dernière livraison: {{ r.last_delivery_at.strftime('%d/%m/%Y %H:%M') }}{% else %}Aucune livraison{% endif %}
-      &nbsp;•&nbsp;
-      {% if r.last_pickup_at %}Dernière reprise: {{ r.last_pickup_at.strftime('%d/%m/%Y %H:%M') }}{% else %}Aucune reprise{% endif %}
-    </div>
+      <div class="small text-muted">
+        {% if r.last_delivery_at %}Dernière livraison: {{ r.last_delivery_at.strftime('%d/%m/%Y %H:%M') }}{% else %}Aucune livraison{% endif %}
+        &nbsp;•&nbsp;
+        {% if r.last_pickup_at %}Dernière reprise: {{ r.last_pickup_at.strftime('%d/%m/%Y %H:%M') }}{% else %}Aucune reprise{% endif %}
+      </div>
 
-    <div class="mt-2 d-flex flex-wrap gap-2 small">
-      <span class="badge bg-dark-subtle text-dark">Tireuse(s): {{ eq.tireuse or 0 }}</span>
-      <span class="badge bg-dark-subtle text-dark">CO₂: {{ eq.co2 or 0 }}</span>
-      <span class="badge bg-dark-subtle text-dark">Comptoir(s): {{ eq.comptoir or 0 }}</span>
-      <span class="badge bg-dark-subtle text-dark">Tonnelle(s): {{ eq.tonnelle or 0 }}</span>
-    </div>
-  </li>
+      <!-- Matériel (avec Ecocup) -->
+      <div class="mt-2 d-flex flex-wrap gap-2 small">
+        <span class="badge bg-dark-subtle text-dark">Tireuse(s): {{ eq.tireuse or 0 }}</span>
+        <span class="badge bg-dark-subtle text-dark">CO₂: {{ eq.co2 or 0 }}</span>
+        <span class="badge bg-dark-subtle text-dark">Comptoir(s): {{ eq.comptoir or 0 }}</span>
+        <span class="badge bg-dark-subtle text-dark">Tonnelle(s): {{ eq.tonnelle or 0 }}</span>
+        <span class="badge bg-dark-subtle text-dark">Ecocup: {{ eq.ecocup or 0 }}</span>
+      </div>
+    </li>
+  {% else %}
+    <li class="list-group-item text-muted">Aucun client</li>
   {% endfor %}
 </ul>
 {% endblock %}
