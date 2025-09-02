@@ -1,4 +1,5 @@
 # app.py — robuste Postgres/SQLite, auto-fix schéma volume_l/deposit_eur, SANS écocup ni pricing
+# Compatible Flask 3 (pas de before_first_request)
 
 import os
 from datetime import datetime
@@ -27,7 +28,7 @@ DEFAULT_PRODUCTS = [
 
 
 def normalize_db_url(url: str) -> str:
-    """Normalise DATABASE_URL pour SQLAlchemy/psycopg3."""
+    """Normalise DATABASE_URL pour SQLAlchemy/psycopg3 (Render/Heroku)."""
     if url.startswith("postgres://"):
         return url.replace("postgres://", "postgresql+psycopg://", 1)
     if url.startswith("postgresql://") and "+psycopg" not in url:
@@ -37,46 +38,43 @@ def normalize_db_url(url: str) -> str:
 
 def ensure_schema(engine: Engine) -> dict:
     """
-    Corrige le schéma si besoin :
-      - table 'variant' doit avoir 'volume_l' (INTEGER) et 'deposit_eur' (INTEGER DEFAULT 0)
+    Vérifie/ajoute sur la table 'variant' :
+      - volume_l INTEGER
+      - deposit_eur INTEGER DEFAULT 0
+    Remplit les NULL si besoin.
     """
     insp = inspect(engine)
-    existing_tables = insp.get_table_names()
-    if "variant" not in existing_tables:
-        return {"added_volume_l": False, "added_deposit_eur": False, "normalized_values": False}
+    tables = insp.get_table_names()
+    result = {"added_volume_l": False, "added_deposit_eur": False, "normalized_values": False}
 
-    existing_cols = {col["name"] for col in insp.get_columns("variant")}
-    added_volume_l = False
-    added_deposit_eur = False
-    normalized_values = False
+    if "variant" not in tables:
+        return result  # créées par create_all()
+
+    cols = {c["name"] for c in insp.get_columns("variant")}
 
     with engine.connect() as conn:
-        if "volume_l" not in existing_cols:
+        if "volume_l" not in cols:
             try:
                 conn.execute(text("ALTER TABLE variant ADD COLUMN volume_l INTEGER"))
-                added_volume_l = True
+                result["added_volume_l"] = True
             except Exception:
                 pass
 
-        if "deposit_eur" not in existing_cols:
+        if "deposit_eur" not in cols:
             try:
                 conn.execute(text("ALTER TABLE variant ADD COLUMN deposit_eur INTEGER DEFAULT 0"))
-                added_deposit_eur = True
+                result["added_deposit_eur"] = True
             except Exception:
                 pass
 
         try:
             conn.execute(text("UPDATE variant SET deposit_eur = 0 WHERE deposit_eur IS NULL"))
             conn.execute(text("UPDATE variant SET volume_l = 20 WHERE volume_l IS NULL"))
-            normalized_values = True
+            result["normalized_values"] = True
         except Exception:
             pass
 
-    return {
-        "added_volume_l": added_volume_l,
-        "added_deposit_eur": added_deposit_eur,
-        "normalized_values": normalized_values,
-    }
+    return result
 
 
 # --------- App Factory ----------
@@ -92,11 +90,8 @@ def create_app():
     Migrate(app, db)
 
     with app.app_context():
+        # Crée les tables si absentes puis patch le schéma si besoin
         db.create_all()
-        ensure_schema(db.engine)
-
-    @app.before_first_request
-    def _ensure_schema_on_first_request():
         ensure_schema(db.engine)
 
     return app
@@ -108,8 +103,7 @@ app = create_app()
 # --------- Helpers ----------
 def compute_totals():
     """
-    Renvoie un dict {(client_id, variant_id): solde_fûts}
-    solde = sum(OUT) - sum(IN)
+    Renvoie {(client_id, variant_id): solde_fûts}, avec solde = sum(OUT) - sum(IN)
     """
     q = (
         db.session.query(
@@ -121,13 +115,7 @@ def compute_totals():
         .group_by(Movement.client_id, Movement.variant_id)
         .all()
     )
-
-    totals = {}
-    for client_id, variant_id, out_qty, in_qty in q:
-        out_qty = out_qty or 0
-        in_qty = in_qty or 0
-        totals[(client_id, variant_id)] = out_qty - in_qty
-    return totals
+    return {(cid, vid): (out or 0) - (inn or 0) for cid, vid, out, inn in q}
 
 
 # --------- Routes ----------
@@ -160,13 +148,11 @@ def new_movement():
         if mtype not in ("OUT", "IN"):
             flash("Type de mouvement invalide.", "error")
             return redirect(url_for("new_movement"))
-
         if quantity <= 0:
             flash("La quantité doit être positive.", "error")
             return redirect(url_for("new_movement"))
 
-        mv = Movement(client_id=client_id, variant_id=variant_id, type=mtype, quantity=quantity)
-        db.session.add(mv)
+        db.session.add(Movement(client_id=client_id, variant_id=variant_id, type=mtype, quantity=quantity))
         db.session.commit()
         flash("Mouvement enregistré.", "success")
         return redirect(url_for("index"))
@@ -179,15 +165,12 @@ def new_movement():
 @app.route("/client/<int:client_id>")
 def client_detail(client_id):
     client = Client.query.get_or_404(client_id)
-
     moves = (
         Movement.query.filter_by(client_id=client.id)
         .order_by(Movement.created_at.desc(), Movement.id.desc())
         .all()
     )
-
-    totals_all = compute_totals()
-    client_totals = {(cid, vid): qty for (cid, vid), qty in totals_all.items() if cid == client.id}
+    client_totals = {k: v for k, v in compute_totals().items() if k[0] == client.id}
     variants = {v.id: v for v in Variant.query.all()}
 
     return render_template(
@@ -231,4 +214,10 @@ def seed_command():
             db.session.add(p)
             db.session.flush()
             for vol in vols:
-                db.sessio
+                db.session.add(Variant(product_id=p.id, volume_l=vol, deposit_eur=0))
+    db.session.commit()
+    print("Base peuplée (clients / produits / variantes).")
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
