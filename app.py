@@ -65,27 +65,36 @@ def create_app():
 
     @app.route('/')
     def index():
-        # valeurs “en jeu”
+        # Règles de valorisation :
+        # - CONSIGNE : OUT +, IN - (comme avant)
+        # - BIÈRE :   OUT + (qty*unit_price), IN = 0 (la bière est consommée, on ne déduit rien)
         beer_value_expr = case(
             (Movement.type == 'OUT', Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)),
-            else_=-Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)
+            else_=0.0
         )
         deposit_value_expr = case(
             (Movement.type == 'OUT', Movement.qty * Movement.deposit_per_keg),
             else_=-Movement.qty * Movement.deposit_per_keg
         )
-        # dernières dates Livraison/Reprise
         last_delivery = func.max(case((Movement.type == 'OUT', Movement.created_at), else_=None))
         last_pickup   = func.max(case((Movement.type == 'IN',  Movement.created_at), else_=None))
+
+        # Indicateurs cumulés livraison (hors consigne)
+        total_delivered_qty = func.coalesce(func.sum(case((Movement.type=='OUT', Movement.qty), else_=0)), 0)
+        total_beer_billed = func.coalesce(func.sum(case(
+            (Movement.type=='OUT', Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)), else_=0.0
+        )), 0.0)
 
         rows = db.session.query(
             Client.id, Client.name,
             func.coalesce(func.sum(case((Movement.type=='OUT', Movement.qty), else_=0)),0).label('out_qty'),
             func.coalesce(func.sum(case((Movement.type=='IN',  Movement.qty), else_=0)),0).label('in_qty'),
             func.coalesce(func.sum(deposit_value_expr), 0.0).label('deposit_in_play'),
-            func.coalesce(func.sum(beer_value_expr), 0.0).label('beer_in_play'),
+            func.coalesce(func.sum(beer_value_expr), 0.0).label('beer_billed_cum'),
             last_delivery.label('last_delivery_at'),
             last_pickup.label('last_pickup_at'),
+            total_delivered_qty.label('delivered_qty_cum'),
+            total_beer_billed.label('beer_billed_total')
         ).join(Movement, Movement.client_id==Client.id, isouter=True)\
          .group_by(Client.id, Client.name).order_by(Client.name).all()
 
@@ -98,7 +107,6 @@ def create_app():
             if not name:
                 flash("Nom de client requis.", "danger")
                 return redirect(url_for('clients'))
-            # unicité simple
             exists = Client.query.filter(func.lower(Client.name)==name.lower()).first()
             if exists:
                 flash("Ce client existe déjà.", "warning")
@@ -115,6 +123,7 @@ def create_app():
     def client_detail(client_id):
         client = Client.query.get_or_404(client_id)
 
+        # Stock par variant
         q = db.session.query(
             Variant.id, Product.name.label('product_name'), Variant.size_l,
             func.coalesce(func.sum(case((Movement.type=='OUT', Movement.qty), else_=0)),0).label('out_qty'),
@@ -126,23 +135,30 @@ def create_app():
          .group_by(Variant.id, Product.name, Variant.size_l).order_by(Product.name, Variant.size_l)
         rows = q.all()
 
+        # Historique complet
         movements = Movement.query.filter_by(client_id=client_id)\
                                   .order_by(Movement.created_at.desc()).all()
 
-        beer_value_expr = case(
-            (Movement.type == 'OUT', Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)),
-            else_=-Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)
-        )
-        deposit_value_expr = case(
-            (Movement.type == 'OUT', Movement.qty * Movement.deposit_per_keg),
-            else_=-Movement.qty * Movement.deposit_per_keg
-        )
-        beer_in_play, deposit_in_play = db.session.query(
-            func.coalesce(func.sum(beer_value_expr), 0.0),
-            func.coalesce(func.sum(deposit_value_expr), 0.0)
-        ).filter(Movement.client_id==client_id).one()
+        # Totaux net consigne + bière cumulée (règle “IN ne déduit pas la bière”)
+        beer_billed_cum = db.session.query(
+            func.coalesce(func.sum(case(
+                (Movement.type=='OUT', Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)),
+                else_=0.0
+            )), 0.0)
+        ).filter(Movement.client_id==client_id).scalar()
 
-        # dernières dates pour ce client
+        deposit_in_play = db.session.query(
+            func.coalesce(func.sum(case(
+                (Movement.type=='OUT', Movement.qty * Movement.deposit_per_keg),
+                else_=-Movement.qty * Movement.deposit_per_keg
+            )), 0.0)
+        ).filter(Movement.client_id==client_id).scalar()
+
+        delivered_qty_cum = db.session.query(
+            func.coalesce(func.sum(case((Movement.type=='OUT', Movement.qty), else_=0)), 0)
+        ).filter(Movement.client_id==client_id).scalar()
+
+        # dernières dates
         last_delivery_at = db.session.query(func.max(Movement.created_at))\
             .filter(Movement.client_id==client_id, Movement.type=='OUT').scalar()
         last_pickup_at = db.session.query(func.max(Movement.created_at))\
@@ -150,7 +166,9 @@ def create_app():
 
         return render_template('client_detail.html',
                                client=client, rows=rows, movements=movements,
-                               beer_in_play=beer_in_play, deposit_in_play=deposit_in_play,
+                               beer_billed_cum=beer_billed_cum,
+                               deposit_in_play=deposit_in_play,
+                               delivered_qty_cum=delivered_qty_cum,
                                last_delivery_at=last_delivery_at, last_pickup_at=last_pickup_at)
 
     @app.route('/movement/new', methods=['GET','POST'])
@@ -178,6 +196,21 @@ def create_app():
         variants = db.session.query(Variant.id, Product.name, Variant.size_l, Variant.price_ttc)\
                              .join(Product).order_by(Product.name, Variant.size_l).all()
         return render_template('movement_new.html', clients=clients, variants=variants)
+
+    # --- Suppression d'un mouvement (avec confirmation) ---
+    @app.route('/movement/<int:movement_id>/confirm_delete')
+    def movement_confirm_delete(movement_id):
+        m = Movement.query.get_or_404(movement_id)
+        return render_template('movement_confirm_delete.html', m=m)
+
+    @app.route('/movement/<int:movement_id>/delete', methods=['POST'])
+    def movement_delete(movement_id):
+        m = Movement.query.get_or_404(movement_id)
+        client_id = m.client_id
+        db.session.delete(m)
+        db.session.commit()
+        flash("Mouvement supprimé ✅", "success")
+        return redirect(url_for('client_detail', client_id=client_id))
 
     @app.route('/products')
     def products():
