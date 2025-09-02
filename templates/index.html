@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Vue d’ensemble{% endblock %}
+{% block content %}
+<h5 class="mb-3">Stock par client</h5>
+<ul class="list-group">
+  {% for r in rows %}
+  {% set in_place = (r.out_qty - r.in_qty) %}
+  <li class="list-group-item d-flex justify-content-between align-items-center">
+    <a class="text-decoration-none" href="{{ url_for('client_detail', client_id=r.id) }}">{{ r.name }}</a>
+    <span>
+      <span class="badge bg-secondary me-2">{{ in_place }} fût(s)</span>
+      <span class="badge bg-warning text-dark">Consignes: {{ '%.0f'|format(r.deposit_in_play) }} €</span>
+    </span>
+  </li>
+  {% endfor %}
+</ul>
+{% endblock %}

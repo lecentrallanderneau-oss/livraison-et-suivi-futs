@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Catalogue{% endblock %}
+{% block content %}
+<h5>Catalogue</h5>
+<table class="table table-sm bg-white">
+  <thead><tr><th>Produit</th><th>Format</th><th class="text-end">Prix TTC</th></tr></thead>
+  <tbody>
+  {% for name, size, price in rows %}
+    <tr><td>{{ name }}</td><td>{{ size }} L</td><td class="text-end">{{ price if price is not none else '—' }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="text-muted small">Rappels: Coreff Ambrée → 22L uniquement ; Coreff Rousse → 20L uniquement.</p>
+{% endblock %}

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Nouveau mouvement{% endblock %}
+{% block content %}
+<h5 class="mb-3">Sortie / Reprise</h5>
+<form method="post" class="card p-3 bg-white">
+  <div class="mb-2">
+    <label class="form-label">Type</label>
+    <select name="type" class="form-select form-select-lg" required>
+      <option value="OUT">Sortie (livraison)</option>
+      <option value="IN">Reprise</option>
+    </select>
+  </div>
+  <div class="mb-2">
+    <label class="form-label">Client</label>
+    <select name="client_id" class="form-select form-select-lg" required>
+      {% for c in clients %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="mb-2">
+    <label class="form-label">Produit & format</label>
+    <select name="variant_id" class="form-select form-select-lg" required>
+      {% for v in variants %}
+        <option value="{{ v.id }}">{{ v.name }} — {{ v.size_l }} L{% if v.price_ttc %} ({{ '%.0f'|format(v.price_ttc) }} €){% endif %}</option>
+      {% endfor %}
+    </select>
+    <div class="form-text">
+      Règles intégrées : Coreff Ambrée → 22L uniquement ; Coreff Rousse → 20L uniquement.
+    </div>
+  </div>
+  <div class="row">
+    <div class="col-6 mb-2">
+      <label class="form-label">Quantité</label>
+      <input type="number" name="qty" class="form-control form-control-lg" value="1" min="1" required>
+    </div>
+    <div class="col-6 mb-2">
+      <label class="form-label">Consigne / fût (€)</label>
+      <input type="number" step="0.01" name="deposit_per_keg" class="form-control form-control-lg" value="30">
+    </div>
+  </div>
+  <div class="mb-2">
+    <label class="form-label">Prix unitaire TTC (€) <small class="text-muted">(optionnel, prérempli par le catalogue)</small></label>
+    <input type="number" step="0.01" name="unit_price_ttc" class="form-control form-control-lg" placeholder="auto si vide">
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Notes</label>
+    <input name="notes" class="form-control form-control-lg" placeholder="ex: dépôt salle VIP">
+  </div>
+  <button class="btn btn-primary btn-lg w-100">Enregistrer</button>
+</form>
+{% endblock %}

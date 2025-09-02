@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}{{ client.name }}{% endblock %}
+{% block content %}
+<h5 class="mb-3">{{ client.name }}</h5>
+<table class="table table-sm align-middle bg-white">
+  <thead><tr><th>Produit</th><th>Format</th><th class="text-end">Chez eux</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    {% set in_place = (r.out_qty - r.in_qty) %}
+    {% if in_place != 0 %}
+    <tr>
+      <td>{{ r.product_name }}</td>
+      <td>{{ r.size_l }} L</td>
+      <td class="text-end"><span class="badge bg-secondary">{{ in_place }}</span></td>
+    </tr>
+    {% endif %}
+  {% endfor %}
+  </tbody>
+</table>
+<a class="btn btn-primary w-100 btn-lg" href="{{ url_for('movement_new') }}">+ Enregistrer un mouvement</a>
+{% endblock %}

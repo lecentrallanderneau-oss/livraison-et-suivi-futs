@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Clients{% endblock %}
+{% block content %}
+<h5>Clients</h5>
+<ul class="list-group">
+  {% for c in clients %}
+  <li class="list-group-item"><a href="{{ url_for('client_detail', client_id=c.id) }}">{{ c.name }}</a></li>
+  {% endfor %}
+</ul>
+{% endblock %}
