@@ -35,11 +35,15 @@
     {% endwith %}
     {% block content %}{% endblock %}
   </main>
+
+  {# Masquer la barre collante sur la fiche client #}
+  {% if request.endpoint != 'client_detail' %}
   <div class="sticky-bottom-bar">
     <div class="d-flex gap-2">
       <a class="btn btn-primary flex-fill btn-lg" href="{{ url_for('movement_new') }}">+ Livraisons / Reprise</a>
       <a class="btn btn-outline-secondary flex-fill btn-lg" href="{{ url_for('clients') }}">Clients</a>
     </div>
   </div>
+  {% endif %}
 </body>
 </html>
