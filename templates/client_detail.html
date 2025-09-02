@@ -67,24 +67,32 @@
   </thead>
   <tbody>
     {% for m, eq, human in movements %}
-      {% set sign_beer = 1 if m.type == 'OUT' else 0 %}
-      {% set unit = m.unit_price_ttc if m.unit_price_ttc is not none else 0 %}
-      {% set beer_total = sign_beer * m.qty * unit %}
-      {% set deposit_total = (1 if m.type=='OUT' else -1) * m.qty * m.deposit_per_keg %}
+      {% set safe_unit = (m.unit_price_ttc or 0) %}
+      {% set safe_deposit = (m.deposit_per_keg or 0) %}
+      {% set beer_total = (m.qty * safe_unit) if m.type == 'OUT' else (-(m.qty * safe_unit)) if m.type == 'DEFECT' else 0 %}
+      {% set deposit_total = (m.qty * safe_deposit) if m.type == 'OUT' else (-(m.qty * safe_deposit)) %}
       <tr>
         <td>{{ m.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
         <td>
           {% if m.type == 'OUT' %}
             <span class="badge bg-primary">Livraison</span>
-          {% else %}
+          {% elif m.type == 'IN' %}
             <span class="badge bg-success">Reprise</span>
+          {% elif m.type == 'DEFECT' %}
+            <span class="badge bg-danger">Reprise défectueux</span>
           {% endif %}
         </td>
-        <td>{{ m.variant.product.name }} — {{ m.variant.size_l }} L</td>
+        <td>
+          {% if m.variant and m.variant.product %}
+            {{ m.variant.product.name }} — {{ m.variant.size_l }} L
+          {% else %}
+            <em class="text-muted">[référence supprimée]</em>
+          {% endif %}
+        </td>
         <td class="text-end">{{ m.qty }}</td>
-        <td class="text-end">{{ unit|float|round(2) }}</td>
+        <td class="text-end">{{ safe_unit|float|round(2) }}</td>
         <td class="text-end">{{ beer_total|float|round(2) }}</td>
-        <td class="text-end">{{ m.deposit_per_keg|float|round(2) }}</td>
+        <td class="text-end">{{ safe_deposit|float|round(2) }}</td>
         <td class="text-end">{{ deposit_total|float|round(2) }}</td>
         <td class="small">
           {% set any = (eq.tireuse or eq.co2 or eq.comptoir or eq.tonnelle) %}
