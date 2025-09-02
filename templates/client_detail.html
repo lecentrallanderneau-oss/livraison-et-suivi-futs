@@ -15,7 +15,6 @@
   <span class="badge bg-warning text-dark">Consignes en jeu: {{ '%.0f'|format(deposit_in_play or 0) }} €</span>
 </div>
 
-<!-- Matériel en cours (inclut Ecocup) -->
 <div class="card p-2 mb-3">
   <div class="fw-semibold mb-2">Matériel en cours chez ce client</div>
   <div class="d-flex flex-wrap gap-2 small">
@@ -32,28 +31,80 @@
   <a class="btn btn-outline-secondary" href="{{ url_for('clients') }}">Changer de client</a>
 </div>
 
-<h6 class="mb-2">Stock actuel (par produit)</h6>
-<div class="table-responsive">
-<table class="table table-sm align-middle bg-white">
-  <thead><tr><th>Produit</th><th>Format</th><th class="text-end">Chez eux</th></tr></thead>
-  <tbody>
-  {% for r in rows %}
-    {% set in_place = (r.out_qty - r.in_qty) %}
-    {% if in_place != 0 %}
-    <tr>
-      <td>{{ r.product_name }}</td>
-      <td>{{ r.size_l }} L</td>
-      <td class="text-end"><span class="badge bg-secondary">{{ in_place }}</span></td>
-    </tr>
-    {% endif %}
-  {% else %}
-    <tr><td colspan="3" class="text-center text-muted">Aucun stock en cours</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
+<ul class="nav nav-pills mb-3" id="pills-tab" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="pills-kegs-tab" data-bs-toggle="pill" data-bs-target="#pills-kegs" type="button" role="tab">Fûts</button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="pills-cups-tab" data-bs-toggle="pill" data-bs-target="#pills-cups" type="button" role="tab">Gobelets</button>
+  </li>
+</ul>
+
+<div class="tab-content" id="pills-tabContent">
+  <!-- Onglet Fûts -->
+  <div class="tab-pane fade show active" id="pills-kegs" role="tabpanel">
+    <h6 class="mb-2">Stock actuel (par produit)</h6>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle bg-white">
+        <thead><tr><th>Produit</th><th>Format</th><th class="text-end">Chez eux</th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+          {% set in_place = (r.out_qty - r.in_qty) %}
+          {% if in_place != 0 %}
+          <tr>
+            <td>{{ r.product_name }}</td>
+            <td>{{ r.size_l }} L</td>
+            <td class="text-end"><span class="badge bg-secondary">{{ in_place }}</span></td>
+          </tr>
+          {% endif %}
+        {% else %}
+          <tr><td colspan="3" class="text-center text-muted">Aucun stock de fûts en cours</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Onglet Gobelets -->
+  <div class="tab-pane fade" id="pills-cups" role="tabpanel">
+    <h6 class="mb-2">Gobelets Ecocup</h6>
+    <div class="mb-2">
+      <span class="badge bg-secondary">En cours chez ce client: {{ equipment_totals.ecocup or 0 }}</span>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-sm bg-white align-middle">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th class="text-end">Qté Ecocup</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in ecocup_events %}
+            <tr>
+              <td>{{ e.date.strftime('%d/%m/%Y %H:%M') }}</td>
+              <td>
+                {% if e.type == 'OUT' %}<span class="badge bg-primary">Prêt</span>
+                {% elif e.type == 'IN' %}<span class="badge bg-success">Retour</span>
+                {% elif e.type == 'DEFECT' %}<span class="badge bg-danger">Retour (défectueux)</span>
+                {% endif %}
+              </td>
+              <td class="text-end">{{ e.qty }}</td>
+              <td>{{ e.note or '' }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="4" class="text-center text-muted">Aucun mouvement d’écocups</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
-<h6 class="mt-4 mb-2">Historique des mouvements</h6>
+<h6 class="mt-4 mb-2">Historique des mouvements (tous)</h6>
 <div class="table-responsive">
 <table class="table table-sm bg-white align-middle">
   <thead>
