@@ -30,7 +30,7 @@ DEFAULT_VARIANTS = [
     ("Coreff IPA", 30, 127),
     ("Coreff Blanche", 20, 81),
     ("Coreff Rousse", 20, 82),   # 20L uniquement
-    ("Coreff Ambrée", 22, None), # 22L uniquement
+    ("Coreff Ambrée", 22, 78),   # 22L uniquement -> PRIX FIXÉ À 78 €
     ("Cidre Val de Rance", 20, 96),
 ]
 
@@ -51,7 +51,6 @@ def seed_if_empty():
 
 # ---- Encodage/decodage matériel dans Movement.notes ----
 def pack_equipment(notes_text: str, eq: dict) -> str:
-    """Fusionne la note lisible et le bloc matériel '||EQ|k=v;...'. Supprime les zéros pour alléger."""
     clean = (notes_text or "").strip()
     parts = []
     for k in EQ_KEYS:
@@ -63,8 +62,7 @@ def pack_equipment(notes_text: str, eq: dict) -> str:
         return (clean + " " + eq_block).strip()
     return clean
 
-def unpack_equipment(notes_text: str) -> tuple[dict, str]:
-    """Retourne ({k:int}, note_sans_bloc). Si pas de bloc, eq=0 et note intacte."""
+def unpack_equipment(notes_text: str):
     eq = {k: 0 for k in EQ_KEYS}
     if not notes_text:
         return eq, ""
@@ -87,7 +85,6 @@ def unpack_equipment(notes_text: str) -> tuple[dict, str]:
     return eq, txt.strip()
 
 def sum_equipment_for_client(client_id: int) -> dict:
-    """Somme nette du matériel chez le client (OUT +, IN -)."""
     totals = {k: 0 for k in EQ_KEYS}
     movements = Movement.query.filter_by(client_id=client_id).all()
     for m in movements:
@@ -95,7 +92,6 @@ def sum_equipment_for_client(client_id: int) -> dict:
         sign = 1 if m.type == 'OUT' else -1
         for k in EQ_KEYS:
             totals[k] += sign * int(eq.get(k, 0) or 0)
-    # Pas de négatif dans l'affichage
     for k in EQ_KEYS:
         if totals[k] < 0:
             totals[k] = 0
@@ -137,6 +133,7 @@ def create_app():
             (Movement.type=='OUT', Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)), else_=0.0
         )), 0.0)
 
+        # Récap chiffré par client (comme avant)
         rows = db.session.query(
             Client.id, Client.name,
             func.coalesce(func.sum(case((Movement.type=='OUT', Movement.qty), else_=0)),0).label('out_qty'),
@@ -150,7 +147,23 @@ def create_app():
         ).join(Movement, Movement.client_id==Client.id, isouter=True)\
          .group_by(Client.id, Client.name).order_by(Client.name).all()
 
-        return render_template('index.html', rows=rows)
+        # 🔎 Matériel prêté par client (un seul passage sur tous les mouvements)
+        equipment_by_client = {c.id: {k: 0 for k in EQ_KEYS} for c in Client.query.all()}
+        for m in Movement.query.with_entities(Movement.client_id, Movement.type, Movement.notes).all():
+            if m.client_id is None:
+                continue
+            eq, _ = unpack_equipment(m.notes)
+            sign = 1 if m.type == 'OUT' else -1
+            bucket = equipment_by_client.setdefault(m.client_id, {k:0 for k in EQ_KEYS})
+            for k in EQ_KEYS:
+                bucket[k] += sign * int(eq.get(k, 0) or 0)
+        # Pas de négatifs
+        for cid, d in equipment_by_client.items():
+            for k in EQ_KEYS:
+                if d[k] < 0:
+                    d[k] = 0
+
+        return render_template('index.html', rows=rows, equipment_by_client=equipment_by_client)
 
     @app.route('/clients', methods=['GET','POST'])
     def clients():
@@ -190,7 +203,6 @@ def create_app():
         # Historique complet
         movements = Movement.query.filter_by(client_id=client_id)\
                                   .order_by(Movement.created_at.desc()).all()
-        # Enrichir les notes affichées (sans le bloc EQ)
         display_movs = []
         for m in movements:
             eq, human = unpack_equipment(m.notes)
@@ -215,7 +227,7 @@ def create_app():
             func.coalesce(func.sum(case((Movement.type=='OUT', Movement.qty), else_=0)), 0)
         ).filter(Movement.client_id==client_id).scalar()
 
-        # Fûts en cours (toutes variantes)
+        # Fûts en cours
         in_place_total = db.session.query(
             func.coalesce(func.sum(case(
                 (Movement.type=='OUT', Movement.qty),
@@ -223,7 +235,7 @@ def create_app():
             )), 0)
         ).filter(Movement.client_id==client_id).scalar()
 
-        # Matériel en cours (tireuse, co2, comptoir, tonnelle)
+        # Matériel en cours
         equipment_totals = sum_equipment_for_client(client_id)
 
         # dernières dates
@@ -307,7 +319,7 @@ def create_app():
                 "tonnelle": int(request.form.get('eq_tonnelle', 0) or 0),
             }
 
-            # 4) Validation "reprise <= stock variant du client"
+            # 4) Validation "reprise <= stock variant du client" et matériel
             if mtype == 'IN':
                 in_place_variant = db.session.query(
                     func.coalesce(func.sum(case(
@@ -316,14 +328,13 @@ def create_app():
                     )), 0)
                 ).filter(and_(Movement.client_id==client_id, Movement.variant_id==variant_id)).scalar()
                 if qty > max(in_place_variant, 0):
-                    flash(f"Impossible de reprendre {qty} fût(s) — stock disponible pour cette référence: {max(in_place_variant, 0)}.", "danger")
+                    flash(f"Impossible de reprendre {qty} fût(s) — stock dispo: {max(in_place_variant, 0)}.", "danger")
                     return redirect(url_for('movement_new', client_id=client_id))
-                # Validation matériel (ne pas aller en négatif)
                 current_eq = sum_equipment_for_client(client_id)
                 for k in EQ_KEYS:
                     want = int(eq.get(k, 0) or 0)
                     if want > current_eq.get(k, 0):
-                        flash(f"Impossible de reprendre {want} {k}(s) — disponible chez le client: {current_eq.get(k,0)}.", "danger")
+                        flash(f"Impossible de reprendre {want} {k}(s) — dispo: {current_eq.get(k,0)}.", "danger")
                         return redirect(url_for('movement_new', client_id=client_id))
 
             # 5) Enregistrer
