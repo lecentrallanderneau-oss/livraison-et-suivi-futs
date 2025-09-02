@@ -43,6 +43,10 @@ ECOCUP_LOSS_NAME = "Ecocup perdu"
 ECOCUP_WASH_PRICE = 0.10  # €/gobelet récupéré (lavage)
 ECOCUP_LOSS_PRICE = 1.00  # €/gobelet manquant
 
+# Flags système dans notes
+FLAG_WASH = "||SYS|ECOCUP_WASH"
+FLAG_LOSS = "||SYS|ECOCUP_LOSS"
+
 
 # --------- Initialisation catalogue ----------
 def seed_if_empty():
@@ -195,6 +199,14 @@ STOCK_EXPR = case(
     else_=0
 )
 
+# Helpers montants Ecocup (lavage + pertes)
+def sum_ecocup_for_client(client_id: int):
+    wash = db.session.query(func.coalesce(func.sum(Movement.qty * Movement.unit_price_ttc), 0.0)) \
+        .filter(Movement.client_id == client_id, Movement.type == 'OUT', Movement.notes.like(f"%{FLAG_WASH}%")).scalar()
+    loss = db.session.query(func.coalesce(func.sum(Movement.qty * Movement.unit_price_ttc), 0.0)) \
+        .filter(Movement.client_id == client_id, Movement.type == 'OUT', Movement.notes.like(f"%{FLAG_LOSS}%")).scalar()
+    return float(wash or 0.0), float(loss or 0.0)
+
 
 # --------- App Factory ----------
 def create_app():
@@ -256,7 +268,16 @@ def create_app():
             for k in EQ_KEYS:
                 if d[k] < 0: d[k] = 0
 
-        return render_template('index.html', rows=rows, equipment_by_client=equipment_by_client)
+        # Montants Ecocup (lavage + pertes) par client
+        ecocup_money_by_client = {}
+        for c in Client.query.all():
+            w, l = sum_ecocup_for_client(c.id)
+            ecocup_money_by_client[c.id] = {"wash": w, "loss": l, "total": w + l}
+
+        return render_template('index.html',
+                               rows=rows,
+                               equipment_by_client=equipment_by_client,
+                               ecocup_money_by_client=ecocup_money_by_client)
 
     @app.route('/clients', methods=['GET', 'POST'])
     def clients():
@@ -328,11 +349,14 @@ def create_app():
          .filter(Movement.client_id == client_id).scalar()
 
         equipment_totals = sum_equipment_for_client(client_id)
-
         last_delivery_at = db.session.query(func.max(Movement.created_at)) \
             .filter(Movement.client_id == client_id, Movement.type == 'OUT').scalar()
         last_pickup_at = db.session.query(func.max(Movement.created_at)) \
             .filter(Movement.client_id == client_id, or_(Movement.type == 'IN', Movement.type == 'DEFECT')).scalar()
+
+        # Montants écocup pour ce client
+        ec_wash, ec_loss = sum_ecocup_for_client(client_id)
+        ec_total = ec_wash + ec_loss
 
         return render_template('client_detail.html',
                                client=client, rows=rows, movements=display_movs,
@@ -342,7 +366,8 @@ def create_app():
                                delivered_qty_cum=delivered_qty_cum,
                                in_place_total=in_place_total,
                                equipment_totals=equipment_totals,
-                               last_delivery_at=last_delivery_at, last_pickup_at=last_pickup_at)
+                               last_delivery_at=last_delivery_at, last_pickup_at=last_pickup_at,
+                               ecocup_wash=ec_wash, ecocup_loss=ec_loss, ecocup_total=ec_total)
 
     @app.route('/movement/new', methods=['GET', 'POST'])
     def movement_new():
@@ -505,7 +530,7 @@ def create_app():
                         qty=returned,
                         unit_price_ttc=ECOCUP_WASH_PRICE,
                         deposit_per_keg=0.0,
-                        notes=f"Lavage Ecocup {returned}u (lié au mouvement #{main_m.id}) ||SYS|ECOCUP_WASH"
+                        notes=f"Lavage Ecocup {returned}u (lié au mouvement #{main_m.id}) {FLAG_WASH}"
                     ))
 
                 # (2) Facturer 1,00 € par gobelet manquant
@@ -518,10 +543,10 @@ def create_app():
                         qty=missing,
                         unit_price_ttc=ECOCUP_LOSS_PRICE,
                         deposit_per_keg=0.0,
-                        notes=f"Ecocup manquant {missing}u (lié au mouvement #{main_m.id}) ||SYS|ECOCUP_LOSS"
+                        notes=f"Ecocup manquant {missing}u (lié au mouvement #{main_m.id}) {FLAG_LOSS}"
                     ))
 
-                # (3) Ajuster l'équipement pour tout retirer (rendu + manquant)
+                # (3) Ajuster la note du mouvement principal pour tracer totals retirés
                 if (returned + missing) > 0:
                     eq_adj = dict(eq)
                     eq_adj["ecocup"] = returned + missing  # retire tout ce qui restait
