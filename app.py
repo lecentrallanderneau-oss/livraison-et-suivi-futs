@@ -30,9 +30,11 @@ DEFAULT_VARIANTS = [
     ("Coreff IPA", 30, 127),
     ("Coreff Blanche", 20, 81),
     ("Coreff Rousse", 20, 82),   # 20L uniquement
-    ("Coreff Ambrée", 22, 78), # 22L uniquement
+    ("Coreff Ambrée", 22, None), # 22L uniquement
     ("Cidre Val de Rance", 20, 96),
 ]
+
+EQ_KEYS = ("tireuse", "co2", "comptoir", "tonnelle")
 
 def seed_if_empty():
     if Client.query.count() == 0 and Product.query.count() == 0 and Variant.query.count() == 0:
@@ -46,6 +48,58 @@ def seed_if_empty():
         for name, size, price in DEFAULT_VARIANTS:
             db.session.add(Variant(product_id=prods[name].id, size_l=size, price_ttc=price))
         db.session.commit()
+
+# ---- Encodage/decodage matériel dans Movement.notes ----
+def pack_equipment(notes_text: str, eq: dict) -> str:
+    """Fusionne la note lisible et le bloc matériel '||EQ|k=v;...'. Supprime les zéros pour alléger."""
+    clean = (notes_text or "").strip()
+    parts = []
+    for k in EQ_KEYS:
+        v = int(eq.get(k, 0) or 0)
+        if v != 0:
+            parts.append(f"{k}={v}")
+    if parts:
+        eq_block = "||EQ|" + ";".join(parts)
+        return (clean + " " + eq_block).strip()
+    return clean
+
+def unpack_equipment(notes_text: str) -> tuple[dict, str]:
+    """Retourne ({k:int}, note_sans_bloc). Si pas de bloc, eq=0 et note intacte."""
+    eq = {k: 0 for k in EQ_KEYS}
+    if not notes_text:
+        return eq, ""
+    txt = notes_text
+    sep = "||EQ|"
+    if sep in txt:
+        human, eqpart = txt.split(sep, 1)
+        human = human.strip()
+        for pair in eqpart.strip().split(";"):
+            if "=" in pair:
+                k, val = pair.split("=", 1)
+                k = k.strip().lower()
+                try:
+                    val = int(val.strip())
+                except:
+                    val = 0
+                if k in eq:
+                    eq[k] = val
+        return eq, human
+    return eq, txt.strip()
+
+def sum_equipment_for_client(client_id: int) -> dict:
+    """Somme nette du matériel chez le client (OUT +, IN -)."""
+    totals = {k: 0 for k in EQ_KEYS}
+    movements = Movement.query.filter_by(client_id=client_id).all()
+    for m in movements:
+        eq, _ = unpack_equipment(m.notes)
+        sign = 1 if m.type == 'OUT' else -1
+        for k in EQ_KEYS:
+            totals[k] += sign * int(eq.get(k, 0) or 0)
+    # Pas de négatif dans l'affichage
+    for k in EQ_KEYS:
+        if totals[k] < 0:
+            totals[k] = 0
+    return totals
 
 def create_app():
     app = Flask(__name__)
@@ -66,7 +120,7 @@ def create_app():
 
     @app.route('/')
     def index():
-        # Valorisation: BIÈRE = OUT seulement ; CONSIGNE = OUT +, IN -
+        # BIÈRE: OUT seulement ; CONSIGNE: OUT +, IN -
         beer_value_expr = case(
             (Movement.type == 'OUT', Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)),
             else_=0.0
@@ -136,6 +190,11 @@ def create_app():
         # Historique complet
         movements = Movement.query.filter_by(client_id=client_id)\
                                   .order_by(Movement.created_at.desc()).all()
+        # Enrichir les notes affichées (sans le bloc EQ)
+        display_movs = []
+        for m in movements:
+            eq, human = unpack_equipment(m.notes)
+            display_movs.append((m, eq, human))
 
         # Totaux
         beer_billed_cum = db.session.query(
@@ -156,13 +215,16 @@ def create_app():
             func.coalesce(func.sum(case((Movement.type=='OUT', Movement.qty), else_=0)), 0)
         ).filter(Movement.client_id==client_id).scalar()
 
-        # Fûts en cours chez eux (toutes variantes confondues)
+        # Fûts en cours (toutes variantes)
         in_place_total = db.session.query(
             func.coalesce(func.sum(case(
                 (Movement.type=='OUT', Movement.qty),
                 else_=-Movement.qty
             )), 0)
         ).filter(Movement.client_id==client_id).scalar()
+
+        # Matériel en cours (tireuse, co2, comptoir, tonnelle)
+        equipment_totals = sum_equipment_for_client(client_id)
 
         # dernières dates
         last_delivery_at = db.session.query(func.max(Movement.created_at))\
@@ -171,23 +233,22 @@ def create_app():
             .filter(Movement.client_id==client_id, Movement.type=='IN').scalar()
 
         return render_template('client_detail.html',
-                               client=client, rows=rows, movements=movements,
+                               client=client, rows=rows, movements=display_movs,
                                beer_billed_cum=beer_billed_cum,
                                deposit_in_play=deposit_in_play,
                                delivered_qty_cum=delivered_qty_cum,
                                in_place_total=in_place_total,
+                               equipment_totals=equipment_totals,
                                last_delivery_at=last_delivery_at, last_pickup_at=last_pickup_at)
 
     @app.route('/movement/new', methods=['GET','POST'])
     def movement_new():
-        # client pré-sélectionné (depuis la fiche client)
         current_client = None
         client_id_param = request.args.get('client_id')
         if client_id_param:
             current_client = Client.query.get(int(client_id_param))
 
         if request.method == 'POST':
-            # client choisi: soit depuis hidden input si on vient d'une fiche, soit via select
             posted_client_id = request.form.get('client_id')
             if posted_client_id:
                 client_id = int(posted_client_id)
@@ -197,10 +258,9 @@ def create_app():
                 flash("Client manquant.", "danger")
                 return redirect(url_for('movement_new'))
 
-            # 1) Déterminer la variante (catalogue OU hors catalogue)
+            # 1) Variante (catalogue OU hors catalogue)
             custom_name = (request.form.get('custom_name') or '').strip()
             if custom_name:
-                # Saisie hors catalogue
                 custom_size = int(request.form.get('custom_size_l', '0') or 0)
                 if custom_size <= 0:
                     flash("Format (L) invalide pour la référence hors catalogue.", "danger")
@@ -208,39 +268,28 @@ def create_app():
                 unit_price_raw = (request.form.get('unit_price_ttc') or '').strip()
                 unit_price = float(unit_price_raw) if unit_price_raw else 0.0
                 deposit_per_keg = float(request.form.get('deposit_per_keg', 30) or 30)
-
-                # Créer / retrouver le Product (nom unique)
                 product = Product.query.filter(func.lower(Product.name)==custom_name.lower()).first()
                 if not product:
                     product = Product(name=custom_name)
-                    db.session.add(product)
-                    db.session.flush()
-                # Créer / retrouver le Variant (même taille)
+                    db.session.add(product); db.session.flush()
                 variant = Variant.query.filter_by(product_id=product.id, size_l=custom_size).first()
                 if not variant:
                     variant = Variant(product_id=product.id, size_l=custom_size, price_ttc=unit_price)
-                    db.session.add(variant)
-                    db.session.flush()
+                    db.session.add(variant); db.session.flush()
                 else:
-                    # Mettre à jour le prix catalogue si on a saisi un prix
                     if unit_price and (variant.price_ttc != unit_price):
-                        variant.price_ttc = unit_price
-                        db.session.flush()
+                        variant.price_ttc = unit_price; db.session.flush()
                 variant_id = variant.id
             else:
-                # Catalogue existant
                 variant_id = int(request.form['variant_id'])
                 deposit_per_keg = float(request.form.get('deposit_per_keg', 30) or 30)
-                # si prix vide on prendra celui du catalogue
                 unit_price_raw = (request.form.get('unit_price_ttc') or '').strip()
                 variant = Variant.query.get_or_404(variant_id)
                 unit_price = float(unit_price_raw) if unit_price_raw else (variant.price_ttc if variant.price_ttc is not None else 0.0)
 
-            # 2) Quantité + Type + Date
+            # 2) Quantité, Type, Date
             qty = int(request.form.get('qty', 1))
             mtype = request.form['type']  # 'OUT' ou 'IN'
-
-            # 2b) Date/heure choisie (datetime-local: 'YYYY-MM-DDTHH:MM')
             created_at = datetime.utcnow()
             date_str = (request.form.get('when') or '').strip()
             if date_str:
@@ -250,7 +299,15 @@ def create_app():
                     flash("Format de date invalide.", "danger")
                     return redirect(url_for('movement_new', client_id=client_id))
 
-            # 3) Validation "reprise <= stock variant du client"
+            # 3) Équipement saisi
+            eq = {
+                "tireuse": int(request.form.get('eq_tireuse', 0) or 0),
+                "co2": int(request.form.get('eq_co2', 0) or 0),
+                "comptoir": int(request.form.get('eq_comptoir', 0) or 0),
+                "tonnelle": int(request.form.get('eq_tonnelle', 0) or 0),
+            }
+
+            # 4) Validation "reprise <= stock variant du client"
             if mtype == 'IN':
                 in_place_variant = db.session.query(
                     func.coalesce(func.sum(case(
@@ -261,17 +318,27 @@ def create_app():
                 if qty > max(in_place_variant, 0):
                     flash(f"Impossible de reprendre {qty} fût(s) — stock disponible pour cette référence: {max(in_place_variant, 0)}.", "danger")
                     return redirect(url_for('movement_new', client_id=client_id))
+                # Validation matériel (ne pas aller en négatif)
+                current_eq = sum_equipment_for_client(client_id)
+                for k in EQ_KEYS:
+                    want = int(eq.get(k, 0) or 0)
+                    if want > current_eq.get(k, 0):
+                        flash(f"Impossible de reprendre {want} {k}(s) — disponible chez le client: {current_eq.get(k,0)}.", "danger")
+                        return redirect(url_for('movement_new', client_id=client_id))
 
-            # 4) Enregistrer le mouvement
+            # 5) Enregistrer
+            human_notes = (request.form.get('notes','').strip() or "")
+            notes = pack_equipment(human_notes, eq)
+
             m = Movement(
                 created_at=created_at,
                 type=mtype,
                 client_id=client_id,
                 variant_id=variant_id,
                 qty=qty,
-                unit_price_ttc=unit_price,       # OUT: valorise bière ; IN : ignoré dans les totaux bière
+                unit_price_ttc=unit_price,  # OUT valorise bière ; IN ignoré pour la bière
                 deposit_per_keg=deposit_per_keg,
-                notes=(request.form.get('notes','').strip() or None)
+                notes=notes
             )
             db.session.add(m); db.session.commit()
             flash('Mouvement enregistré ✅', "success")
