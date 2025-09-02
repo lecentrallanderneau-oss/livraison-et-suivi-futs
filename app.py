@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, flash
-from sqlalchemy import func, case, and_, update
+from sqlalchemy import func, case, and_, update, or_
 from models import db, Client, Product, Variant, Movement
 
 # --------- Données par défaut ----------
@@ -85,11 +85,9 @@ def ensure_catalog_fixes():
 
 def ensure_data_consistency():
     """Évite les NULL anciens qui font planter les calculs."""
-    # Mettre unit_price_ttc = 0.0 si NULL
     db.session.execute(
         update(Movement).where(Movement.unit_price_ttc.is_(None)).values(unit_price_ttc=0.0)
     )
-    # Mettre deposit_per_keg = 0.0 si NULL
     db.session.execute(
         update(Movement).where(Movement.deposit_per_keg.is_(None)).values(deposit_per_keg=0.0)
     )
@@ -142,7 +140,6 @@ def sum_equipment_for_client(client_id: int):
         sign = 1 if m.type == 'OUT' else -1
         for k in EQ_KEYS:
             totals[k] += sign * int(eq.get(k, 0) or 0)
-    # pas de négatif en affichage
     for k in EQ_KEYS:
         if totals[k] < 0:
             totals[k] = 0
@@ -150,20 +147,17 @@ def sum_equipment_for_client(client_id: int):
 
 
 # --------- Expressions SQL réutilisables ----------
-# Bière facturée: OUT + ; DEFECT - ; IN 0
 BEER_VALUE_EXPR = case(
     (Movement.type == 'OUT', Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)),
     (Movement.type == 'DEFECT', -Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)),
     else_=0.0
 )
-# Consignes en jeu: OUT + ; IN - ; DEFECT -
 DEPOSIT_VALUE_EXPR = case(
     (Movement.type == 'OUT', Movement.qty * func.coalesce(Movement.deposit_per_keg, 0.0)),
     (Movement.type == 'IN', -Movement.qty * func.coalesce(Movement.deposit_per_keg, 0.0)),
     (Movement.type == 'DEFECT', -Movement.qty * func.coalesce(Movement.deposit_per_keg, 0.0)),
     else_=0.0
 )
-# Stock en place: OUT + ; IN - ; DEFECT -
 STOCK_EXPR = case(
     (Movement.type == 'OUT', Movement.qty),
     (Movement.type == 'IN', -Movement.qty),
@@ -195,11 +189,8 @@ def create_app():
     # --------- Routes ----------
     @app.route('/')
     def index():
-        # dates utiles
         last_delivery = func.max(case((Movement.type == 'OUT', Movement.created_at), else_=None))
-        last_pickup   = func.max(
-            case(((Movement.type == 'IN') | (Movement.type == 'DEFECT'), Movement.created_at), else_=None)
-        )
+        last_pickup   = func.max(case((or_(Movement.type == 'IN', Movement.type == 'DEFECT'), Movement.created_at), else_=None))
 
         total_delivered_qty = func.coalesce(func.sum(case((Movement.type == 'OUT', Movement.qty), else_=0)), 0)
         total_beer_billed   = func.coalesce(func.sum(BEER_VALUE_EXPR), 0.0)
@@ -207,7 +198,7 @@ def create_app():
         rows = db.session.query(
             Client.id, Client.name,
             func.coalesce(func.sum(case((Movement.type == 'OUT', Movement.qty), else_=0)), 0).label('out_qty'),
-            func.coalesce(func.sum(case(((Movement.type == 'IN') | (Movement.type == 'DEFECT'), Movement.qty), else_=0)), 0).label('in_qty'),
+            func.coalesce(func.sum(case((or_(Movement.type == 'IN', Movement.type == 'DEFECT'), Movement.qty), else_=0)), 0).label('in_qty'),
             func.coalesce(func.sum(DEPOSIT_VALUE_EXPR), 0.0).label('deposit_in_play'),
             func.coalesce(func.sum(BEER_VALUE_EXPR), 0.0).label('beer_billed_cum'),
             last_delivery.label('last_delivery_at'),
@@ -218,7 +209,6 @@ def create_app():
          .group_by(Client.id, Client.name) \
          .order_by(Client.name).all()
 
-        # Matériel prêté par client
         equipment_by_client = {c.id: {k: 0 for k in EQ_KEYS} for c in Client.query.all()}
         for m in Movement.query.with_entities(Movement.client_id, Movement.type, Movement.notes).all():
             if m.client_id is None:
@@ -257,11 +247,10 @@ def create_app():
     def client_detail(client_id):
         client = Client.query.get_or_404(client_id)
 
-        # Stock par produit
         q = db.session.query(
             Variant.id, Product.name.label('product_name'), Variant.size_l,
             func.coalesce(func.sum(case((Movement.type == 'OUT', Movement.qty), else_=0)), 0).label('out_qty'),
-            func.coalesce(func.sum(case(((Movement.type == 'IN') | (Movement.type == 'DEFECT'), Movement.qty), else_=0)), 0).label('in_qty'),
+            func.coalesce(func.sum(case((or_(Movement.type == 'IN', Movement.type == 'DEFECT'), Movement.qty), else_=0)), 0).label('in_qty'),
             func.min(Variant.price_ttc).label('catalog_price')
         ).join(Product, Product.id == Variant.product_id) \
          .join(Movement, Movement.variant_id == Variant.id, isouter=True) \
@@ -270,14 +259,12 @@ def create_app():
          .order_by(Product.name, Variant.size_l)
         rows = q.all()
 
-        # Historique détaillé
         movements = Movement.query.filter_by(client_id=client_id).order_by(Movement.created_at.desc()).all()
         display_movs = []
         for m in movements:
             eq, human = unpack_equipment(m.notes)
             display_movs.append((m, eq, human))
 
-        # Totaux
         beer_billed_cum = db.session.query(func.coalesce(func.sum(BEER_VALUE_EXPR), 0.0)) \
                                     .filter(Movement.client_id == client_id).scalar()
 
@@ -296,7 +283,7 @@ def create_app():
         last_delivery_at = db.session.query(func.max(Movement.created_at)) \
             .filter(Movement.client_id == client_id, Movement.type == 'OUT').scalar()
         last_pickup_at = db.session.query(func.max(Movement.created_at)) \
-            .filter(Movement.client_id == client_id, (Movement.type == 'IN') | (Movement.type == 'DEFECT')).scalar()
+            .filter(Movement.client_id == client_id, or_(Movement.type == 'IN', Movement.type == 'DEFECT')).scalar()
 
         return render_template('client_detail.html',
                                client=client, rows=rows, movements=display_movs,
@@ -315,7 +302,6 @@ def create_app():
             current_client = Client.query.get(int(client_id_param))
 
         if request.method == 'POST':
-            # client
             posted_client_id = request.form.get('client_id')
             if posted_client_id:
                 client_id = int(posted_client_id)
@@ -325,7 +311,6 @@ def create_app():
                 flash("Client manquant.", "danger")
                 return redirect(url_for('movement_new'))
 
-            # Produit/variant: catalogue, hors catalogue, ou matériel seul
             custom_name = (request.form.get('custom_name') or '').strip()
             variant_id = None
             variant = None
@@ -359,7 +344,6 @@ def create_app():
                 if variant_id:
                     variant = Variant.query.get_or_404(variant_id)
 
-            # Matériel (peut être non nul même si aucun fût)
             eq = {
                 "tireuse": int(request.form.get('eq_tireuse', 0) or 0),
                 "co2": int(request.form.get('eq_co2', 0) or 0),
@@ -368,19 +352,16 @@ def create_app():
             }
             any_equipment = any(v > 0 for v in eq.values())
 
-            # Si ni produit ni matériel -> erreur
             if not variant_id and not any_equipment:
                 flash("Choisis une référence ou saisis du matériel prêté/repris.", "danger")
                 return redirect(url_for('movement_new', client_id=client_id))
 
-            # Si matériel seul -> placeholder "Matériel seul (0L)"
             if any_equipment and not variant_id:
                 variant = get_or_create_equipment_placeholder()
                 variant_id = variant.id
 
-            # Quantité / Type / Date
-            qty = int(request.form.get('qty', 0))   # autorise 0
-            mtype = request.form['type']            # 'OUT' | 'IN' | 'DEFECT'
+            qty = int(request.form.get('qty', 0))
+            mtype = request.form['type']  # 'OUT' | 'IN' | 'DEFECT'
             created_at = datetime.utcnow()
             date_str = (request.form.get('when') or '').strip()
             if date_str:
@@ -390,7 +371,6 @@ def create_app():
                     flash("Format de date invalide.", "danger")
                     return redirect(url_for('movement_new', client_id=client_id))
 
-            # Prix / Consigne
             unit_price_raw = (request.form.get('unit_price_ttc') or '').strip()
             deposit_per_keg = float(request.form.get('deposit_per_keg', 30) or 30)
 
@@ -406,7 +386,6 @@ def create_app():
                     else:
                         unit_price = (variant.price_ttc if variant and variant.price_ttc is not None else 0.0)
 
-            # Validations anti-négatif pour IN/DEFECT
             if mtype in ('IN', 'DEFECT'):
                 if qty > 0:
                     in_place_variant = db.session.query(func.coalesce(func.sum(STOCK_EXPR), 0)) \
@@ -422,7 +401,6 @@ def create_app():
                             flash(f"Impossible de reprendre {want} {k}(s) — dispo: {current_eq.get(k, 0)}.", "danger")
                             return redirect(url_for('movement_new', client_id=client_id))
 
-            # Enregistrement
             human_notes = (request.form.get('notes', '').strip() or "")
             notes = pack_equipment(human_notes, eq)
 
@@ -432,8 +410,8 @@ def create_app():
                 client_id=client_id,
                 variant_id=variant_id,
                 qty=qty,
-                unit_price_ttc=unit_price,       # OUT +, DEFECT - pour bière ; IN ignoré
-                deposit_per_keg=deposit_per_keg, # OUT +, IN -, DEFECT -
+                unit_price_ttc=unit_price,
+                deposit_per_keg=deposit_per_keg,
                 notes=notes
             )
             db.session.add(m)
@@ -446,7 +424,6 @@ def create_app():
                              .join(Product).order_by(Product.name, Variant.size_l).all()
         return render_template('movement_new.html', clients=clients, variants=variants, current_client=current_client)
 
-    # Suppression avec confirmation
     @app.route('/movement/<int:movement_id>/confirm_delete')
     def movement_confirm_delete(movement_id):
         m = Movement.query.get_or_404(movement_id)
