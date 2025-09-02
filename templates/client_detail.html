@@ -67,17 +67,25 @@
   </thead>
   <tbody>
     {% for m, eq, human in movements %}
-      {% set sign_beer = 1 if m.type == 'OUT' else 0 %}
       {% set unit = m.unit_price_ttc if m.unit_price_ttc is not none else 0 %}
-      {% set beer_total = sign_beer * m.qty * unit %}
-      {% set deposit_total = (1 if m.type=='OUT' else -1) * m.qty * m.deposit_per_keg %}
+      {% set beer_total =
+          (m.qty * unit) if m.type == 'OUT'
+          else (-(m.qty * unit)) if m.type == 'DEFECT'
+          else 0
+      %}
+      {% set deposit_total =
+          (m.qty * m.deposit_per_keg) if m.type == 'OUT'
+          else (-(m.qty * m.deposit_per_keg))  # IN & DEFECT
+      %}
       <tr>
         <td>{{ m.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
         <td>
           {% if m.type == 'OUT' %}
             <span class="badge bg-primary">Livraison</span>
-          {% else %}
+          {% elif m.type == 'IN' %}
             <span class="badge bg-success">Reprise</span>
+          {% elif m.type == 'DEFECT' %}
+            <span class="badge bg-danger">Reprise défectueux</span>
           {% endif %}
         </td>
         <td>{{ m.variant.product.name }} — {{ m.variant.size_l }} L</td>
@@ -106,4 +114,6 @@
   </tbody>
 </table>
 </div>
+
+<a class="btn btn-primary w-100 btn-lg mt-3" href="{{ url_for('movement_new', client_id=client.id) }}">+ Enregistrer une livraison / reprise</a>
 {% endblock %}
