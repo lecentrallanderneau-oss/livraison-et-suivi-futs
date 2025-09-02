@@ -20,6 +20,7 @@
     <select name="type" class="form-select form-select-lg" required>
       <option value="OUT">Livraison</option>
       <option value="IN">Reprise</option>
+      <option value="DEFECT">Reprise défectueux</option>
     </select>
   </div>
 
@@ -95,12 +96,12 @@
         <input type="number" name="eq_tonnelle" class="form-control form-control-lg" value="0" min="0">
       </div>
     </div>
-    <div class="form-text">En Livraison, ces nombres s’ajoutent chez le client ; en Reprise, ils se retirent.</div>
+    <div class="form-text">En Livraison, ces nombres s’ajoutent chez le client ; en Reprise/Defect, ils se retirent.</div>
   </div>
 
   <div class="mb-3">
     <label class="form-label">Notes</label>
-    <input name="notes" class="form-control form-control-lg" placeholder="ex: Barnum 3x3, salle VIP">
+    <input name="notes" class="form-control form-control-lg" placeholder="ex: Fût percé → DEFECT">
   </div>
 
   <button class="btn btn-primary btn-lg w-100">Enregistrer</button>
