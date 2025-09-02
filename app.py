@@ -40,8 +40,8 @@ EQ_KEYS = ("tireuse", "co2", "comptoir", "tonnelle", "ecocup")
 # Produits techniques Ecocup
 ECOCUP_WASH_NAME = "Ecocup lavage"
 ECOCUP_LOSS_NAME = "Ecocup perdu"
-ECOCUP_WASH_PRICE = 0.10  # €/gobelet prêté
-ECOCUP_LOSS_PRICE = 1.00  # €/gobelet manquant au retour
+ECOCUP_WASH_PRICE = 0.10  # €/gobelet récupéré (lavage)
+ECOCUP_LOSS_PRICE = 1.00  # €/gobelet manquant
 
 
 # --------- Initialisation catalogue ----------
@@ -228,15 +228,13 @@ def create_app():
     # --------- Routes ----------
     @app.route('/')
     def index():
-        # IMPORTANT: on ignore les variants 0L pour le stock fûts (matériel/écocup)
+        # IMPORTANT: on ignore les variants 0L pour le stock fûts
         last_delivery = func.max(case((Movement.type == 'OUT', Movement.created_at), else_=None))
         last_pickup   = func.max(case((or_(Movement.type == 'IN', Movement.type == 'DEFECT'), Movement.created_at), else_=None))
 
         total_delivered_qty = func.coalesce(func.sum(case(
             (and_(Movement.type == 'OUT', Variant.size_l > 0), Movement.qty)
         , else_=0)), 0)
-
-        total_beer_billed   = func.coalesce(func.sum(BEER_VALUE_EXPR), 0.0)
 
         rows = db.session.query(
             Client.id, Client.name,
@@ -305,7 +303,7 @@ def create_app():
          .order_by(Product.name, Variant.size_l)
         rows = q.all()
 
-        # Historique détaillé (inchangé)
+        # Historique détaillé & évènements Ecocup
         movements = Movement.query.filter_by(client_id=client_id).order_by(Movement.created_at.desc()).all()
         display_movs = []
         ecocup_events = []
@@ -470,7 +468,7 @@ def create_app():
                             flash(f"Impossible de reprendre {want} {k}(s) — dispo: {current_eq.get(k, 0)}.", "danger")
                             return redirect(url_for('movement_new', client_id=client_id))
 
-            # Enregistrement principal (+ écocups calculés)
+            # Enregistrement principal
             human_notes = (request.form.get('notes', '').strip() or "")
             notes = pack_equipment(human_notes, eq)
 
@@ -487,33 +485,40 @@ def create_app():
             db.session.add(main_m)
             db.session.flush()  # id dispo
 
-            # --- Règles Ecocup ---
+            # --- Règles Ecocup (NOUVELLES) ---
             var_wash, var_loss = get_or_create_ecocup_variants()
 
             if mtype == 'OUT':
-                ec_out = eq.get("ecocup", 0) or 0
-                if ec_out > 0:
+                # Plus de facturation lavage au prêt (règle modifiée) — rien à faire ici.
+                pass
+
+            if mtype in ('IN', 'DEFECT'):
+                # 1) On calcule ce que le client a AVANT ce retour
+                current_ec = sum_equipment_for_client(client_id).get("ecocup", 0)
+
+                # 2) Récupéré (retourné) ce jour
+                returned = eq.get("ecocup", 0) or 0
+                if returned > current_ec:
+                    returned = current_ec  # clamp sécurité
+
+                # 3) Manquants
+                missing = max(0, current_ec - returned)
+
+                # 4) Facturer lavage sur les gobelets récupérés
+                if returned > 0:
                     db.session.add(Movement(
                         created_at=created_at,
                         type='OUT',
                         client_id=client_id,
                         variant_id=var_wash.id,
-                        qty=ec_out,
+                        qty=returned,
                         unit_price_ttc=ECOCUP_WASH_PRICE,
                         deposit_per_keg=0.0,
-                        notes=f"Lavage Ecocup {ec_out}u (lié au mouvement #{main_m.id})"
+                        notes=f"Lavage Ecocup {returned}u (lié au mouvement #{main_m.id})"
                     ))
 
-            if mtype in ('IN', 'DEFECT'):
-                current_ec = sum_equipment_for_client(client_id).get("ecocup", 0)
-                returned = eq.get("ecocup", 0) or 0
-                if returned > current_ec:
-                    returned = current_ec  # clamp sécurité
-
-                missing = max(0, current_ec - returned)
-
+                # 5) Facturer perte sur les manquants
                 if missing > 0:
-                    # Facture 1€ par gobelet manquant
                     db.session.add(Movement(
                         created_at=created_at,
                         type='OUT',
@@ -524,10 +529,16 @@ def create_app():
                         deposit_per_keg=0.0,
                         notes=f"Ecocup manquant {missing}u (lié au mouvement #{main_m.id})"
                     ))
-                    # Ajustement de la note pour tracer l’info
+
+                # 6) Ajuster la note du mouvement principal pour tracer totals retirés
+                if (returned + missing) > 0:
                     eq_adj = dict(eq)
                     eq_adj["ecocup"] = returned + missing
-                    main_m.notes = pack_equipment(human_notes + ((" — dont " + str(missing) + " manquants") if human_notes else f"Dont {missing} manquants"), eq_adj)
+                    extra = []
+                    if returned > 0: extra.append(f"{returned} lavés")
+                    if missing > 0: extra.append(f"{missing} manquants")
+                    extra_txt = " — " + ", ".join(extra) if extra else ""
+                    main_m.notes = pack_equipment(human_notes + extra_txt, eq_adj)
 
             db.session.commit()
             flash('Mouvement enregistré ✅', "success")
