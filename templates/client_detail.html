@@ -15,6 +15,16 @@
   <span class="badge bg-warning text-dark">Consignes en jeu: {{ '%.0f'|format(deposit_in_play or 0) }} €</span>
 </div>
 
+<div class="card p-2 mb-3">
+  <div class="fw-semibold mb-2">Matériel en cours chez ce client</div>
+  <div class="d-flex flex-wrap gap-2 small">
+    <span class="badge bg-dark-subtle text-dark">Tireuse(s): {{ equipment_totals.tireuse }}</span>
+    <span class="badge bg-dark-subtle text-dark">CO₂: {{ equipment_totals.co2 }}</span>
+    <span class="badge bg-dark-subtle text-dark">Comptoir(s): {{ equipment_totals.comptoir }}</span>
+    <span class="badge bg-dark-subtle text-dark">Tonnelle(s): {{ equipment_totals.tonnelle }}</span>
+  </div>
+</div>
+
 <div class="d-flex gap-2 mb-3">
   <a class="btn btn-outline-primary" href="{{ url_for('movement_new', client_id=client.id) }}">+ Livraison / Reprise ici</a>
   <a class="btn btn-outline-secondary" href="{{ url_for('clients') }}">Changer de client</a>
@@ -50,13 +60,14 @@
       <th class="text-end">Total bière (€)</th>
       <th class="text-end">Consigne / fût (€)</th>
       <th class="text-end">Total consigne (€)</th>
+      <th>Matériel</th>
       <th>Notes</th>
       <th class="text-end">Actions</th>
     </tr>
   </thead>
   <tbody>
-    {% for m in movements %}
-      {% set sign_beer = 1 if m.type == 'OUT' else 0 %} {# IN ne déduit pas la bière #}
+    {% for m, eq, human in movements %}
+      {% set sign_beer = 1 if m.type == 'OUT' else 0 %}
       {% set unit = m.unit_price_ttc if m.unit_price_ttc is not none else 0 %}
       {% set beer_total = sign_beer * m.qty * unit %}
       {% set deposit_total = (1 if m.type=='OUT' else -1) * m.qty * m.deposit_per_keg %}
@@ -75,17 +86,24 @@
         <td class="text-end">{{ beer_total|float|round(2) }}</td>
         <td class="text-end">{{ m.deposit_per_keg|float|round(2) }}</td>
         <td class="text-end">{{ deposit_total|float|round(2) }}</td>
-        <td>{{ m.notes or '' }}</td>
+        <td class="small">
+          {% set any = (eq.tireuse or eq.co2 or eq.comptoir or eq.tonnelle) %}
+          {% if any %}
+            {% if eq.tireuse %}Tireuse: {{ eq.tireuse }}{% endif %}
+            {% if eq.co2 %}{% if eq.tireuse %} • {% endif %}CO₂: {{ eq.co2 }}{% endif %}
+            {% if eq.comptoir %}{% if eq.tireuse or eq.co2 %} • {% endif %}Comptoir: {{ eq.comptoir }}{% endif %}
+            {% if eq.tonnelle %}{% if eq.tireuse or eq.co2 or eq.comptoir %} • {% endif %}Tonnelle: {{ eq.tonnelle }}{% endif %}
+          {% else %}—{% endif %}
+        </td>
+        <td>{{ human or '' }}</td>
         <td class="text-end">
           <a class="btn btn-sm btn-outline-danger" href="{{ url_for('movement_confirm_delete', movement_id=m.id) }}">Supprimer…</a>
         </td>
       </tr>
     {% else %}
-      <tr><td colspan="10" class="text-center text-muted">Aucun mouvement enregistré</td></tr>
+      <tr><td colspan="11" class="text-center text-muted">Aucun mouvement enregistré</td></tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
-
-<a class="btn btn-primary w-100 btn-lg mt-3" href="{{ url_for('movement_new', client_id=client.id) }}">+ Enregistrer une livraison / reprise</a>
 {% endblock %}
