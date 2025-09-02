@@ -30,7 +30,7 @@ DEFAULT_VARIANTS = [
     ("Coreff IPA", 30, 127),
     ("Coreff Blanche", 20, 81),
     ("Coreff Rousse", 20, 82),   # 20L uniquement
-    ("Coreff Ambrée", 22, None), # 22L uniquement
+    ("Coreff Ambrée", 22, 78), # 22L uniquement
     ("Cidre Val de Rance", 20, 96),
 ]
 
