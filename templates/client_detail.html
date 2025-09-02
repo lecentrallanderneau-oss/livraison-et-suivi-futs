@@ -8,10 +8,11 @@
   {% if last_pickup_at %}Dernière reprise: {{ last_pickup_at.strftime('%d/%m/%Y %H:%M') }}{% else %}Aucune reprise{% endif %}
 </div>
 
-<div class="mb-3">
-  <span class="badge bg-secondary me-2">Fûts en cours chez eux: {{ in_place_total or 0 }}</span>
-  <span class="badge bg-secondary me-2">Fûts livrés cumulés: {{ delivered_qty_cum or 0 }}</span>
-  <span class="badge bg-info text-dark me-2">Bière facturée cumulée: {{ '%.0f'|format(beer_billed_cum or 0) }} €</span>
+<div class="mb-3 d-flex flex-wrap gap-2">
+  <span class="badge bg-secondary">Fûts en cours chez eux: {{ in_place_total or 0 }}</span>
+  <span class="badge bg-secondary">Fûts livrés cumulés: {{ delivered_qty_cum or 0 }}</span>
+  <span class="badge bg-info text-dark">Bière facturée cumulée: {{ '%.0f'|format(beer_billed_cum or 0) }} €</span>
+  <span class="badge text-light" style="background:#6f42c1">Gobelets (lav+pertes): {{ '%.2f'|format(ecocup_total or 0) }} €</span>
   <span class="badge bg-warning text-dark">Consignes en jeu: {{ '%.0f'|format(deposit_in_play or 0) }} €</span>
 </div>
 
@@ -70,6 +71,7 @@
     <h6 class="mb-2">Gobelets Ecocup</h6>
     <div class="mb-2">
       <span class="badge bg-secondary">En cours chez ce client: {{ equipment_totals.ecocup or 0 }}</span>
+      <span class="badge text-light" style="background:#6f42c1">Total (lav+pertes): {{ '%.2f'|format(ecocup_total or 0) }} €</span>
     </div>
 
     <div class="table-responsive">
