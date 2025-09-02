@@ -77,34 +77,25 @@ def get_or_create_equipment_placeholder():
     return v
 
 
+def _get_or_create_product_variant(name: str, price: float):
+    """Assure l'existence d'un produit 0L au prix donné (pour écocup)."""
+    prod = Product.query.filter(func.lower(Product.name) == name.lower()).first()
+    if not prod:
+        prod = Product(name=name)
+        db.session.add(prod); db.session.flush()
+    var = Variant.query.filter_by(product_id=prod.id, size_l=0).first()
+    if not var:
+        var = Variant(product_id=prod.id, size_l=0, price_ttc=price)
+        db.session.add(var); db.session.flush()
+    else:
+        if var.price_ttc != price:
+            var.price_ttc = price; db.session.flush()
+    return var
+
+
 def get_or_create_ecocup_variants():
-    """Crée (si besoin) Ecocup lavage (0L, 0.10€) et Ecocup perdu (0L, 1.00€)."""
-    # Lavage
-    prod_w = Product.query.filter(func.lower(Product.name) == ECOCUP_WASH_NAME.lower()).first()
-    if not prod_w:
-        prod_w = Product(name=ECOCUP_WASH_NAME)
-        db.session.add(prod_w); db.session.flush()
-    var_w = Variant.query.filter_by(product_id=prod_w.id, size_l=0).first()
-    if not var_w:
-        var_w = Variant(product_id=prod_w.id, size_l=0, price_ttc=ECOCUP_WASH_PRICE)
-        db.session.add(var_w); db.session.flush()
-    else:
-        if var_w.price_ttc != ECOCUP_WASH_PRICE:
-            var_w.price_ttc = ECOCUP_WASH_PRICE; db.session.flush()
-
-    # Perte
-    prod_l = Product.query.filter(func.lower(Product.name) == ECOCUP_LOSS_NAME.lower()).first()
-    if not prod_l:
-        prod_l = Product(name=ECOCUP_LOSS_NAME)
-        db.session.add(prod_l); db.session.flush()
-    var_l = Variant.query.filter_by(product_id=prod_l.id, size_l=0).first()
-    if not var_l:
-        var_l = Variant(product_id=prod_l.id, size_l=0, price_ttc=ECOCUP_LOSS_PRICE)
-        db.session.add(var_l); db.session.flush()
-    else:
-        if var_l.price_ttc != ECOCUP_LOSS_PRICE:
-            var_l.price_ttc = ECOCUP_LOSS_PRICE; db.session.flush()
-
+    var_w = _get_or_create_product_variant(ECOCUP_WASH_NAME, ECOCUP_WASH_PRICE)
+    var_l = _get_or_create_product_variant(ECOCUP_LOSS_NAME, ECOCUP_LOSS_PRICE)
     db.session.commit()
     return var_w, var_l
 
@@ -485,26 +476,26 @@ def create_app():
             db.session.add(main_m)
             db.session.flush()  # id dispo
 
-            # --- Règles Ecocup (NOUVELLES) ---
+            # --- Règles Ecocup (finales) ---
             var_wash, var_loss = get_or_create_ecocup_variants()
 
             if mtype == 'OUT':
-                # Plus de facturation lavage au prêt (règle modifiée) — rien à faire ici.
+                # Aucun frais écocup au prêt
                 pass
 
             if mtype in ('IN', 'DEFECT'):
-                # 1) On calcule ce que le client a AVANT ce retour
+                # Stock écocup chez le client AVANT ce retour
                 current_ec = sum_equipment_for_client(client_id).get("ecocup", 0)
 
-                # 2) Récupéré (retourné) ce jour
-                returned = eq.get("ecocup", 0) or 0
+                # Quantité physiquement récupérée
+                returned = max(0, int(eq.get("ecocup", 0) or 0))
                 if returned > current_ec:
                     returned = current_ec  # clamp sécurité
 
-                # 3) Manquants
+                # Manquants
                 missing = max(0, current_ec - returned)
 
-                # 4) Facturer lavage sur les gobelets récupérés
+                # (1) Facturer 0,10 € par gobelet récupéré (lavage)
                 if returned > 0:
                     db.session.add(Movement(
                         created_at=created_at,
@@ -514,10 +505,10 @@ def create_app():
                         qty=returned,
                         unit_price_ttc=ECOCUP_WASH_PRICE,
                         deposit_per_keg=0.0,
-                        notes=f"Lavage Ecocup {returned}u (lié au mouvement #{main_m.id})"
+                        notes=f"Lavage Ecocup {returned}u (lié au mouvement #{main_m.id}) ||SYS|ECOCUP_WASH"
                     ))
 
-                # 5) Facturer perte sur les manquants
+                # (2) Facturer 1,00 € par gobelet manquant
                 if missing > 0:
                     db.session.add(Movement(
                         created_at=created_at,
@@ -527,13 +518,13 @@ def create_app():
                         qty=missing,
                         unit_price_ttc=ECOCUP_LOSS_PRICE,
                         deposit_per_keg=0.0,
-                        notes=f"Ecocup manquant {missing}u (lié au mouvement #{main_m.id})"
+                        notes=f"Ecocup manquant {missing}u (lié au mouvement #{main_m.id}) ||SYS|ECOCUP_LOSS"
                     ))
 
-                # 6) Ajuster la note du mouvement principal pour tracer totals retirés
+                # (3) Ajuster l'équipement pour tout retirer (rendu + manquant)
                 if (returned + missing) > 0:
                     eq_adj = dict(eq)
-                    eq_adj["ecocup"] = returned + missing
+                    eq_adj["ecocup"] = returned + missing  # retire tout ce qui restait
                     extra = []
                     if returned > 0: extra.append(f"{returned} lavés")
                     if missing > 0: extra.append(f"{missing} manquants")
