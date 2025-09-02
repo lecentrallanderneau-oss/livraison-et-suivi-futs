@@ -32,14 +32,14 @@
   <div class="mb-2">
     <label class="form-label">Produit & format (catalogue)</label>
     <select name="variant_id" class="form-select form-select-lg">
-      <option value="">— choisir dans le catalogue —</option>
+      <option value="">— (aucun, matériel seul) —</option>
       {% for v in variants %}
         <option value="{{ v.id }}">{{ v.name }} — {{ v.size_l }} L{% if v.price_ttc %} ({{ '%.0f'|format(v.price_ttc) }} €){% endif %}</option>
       {% endfor %}
     </select>
     <div class="form-text">
       Règles: Coreff Ambrée → 22L ; Coreff Rousse → 20L.  
-      <strong>OU</strong> saisir une référence <em>hors catalogue</em> ci-dessous.
+      <strong>OU</strong> saisir une référence <em>hors catalogue</em> ci-dessous, <strong>OU</strong> rien si c’est du matériel seul.
     </div>
   </div>
 
@@ -65,11 +65,13 @@
   <div class="row">
     <div class="col-6 mb-2">
       <label class="form-label">Quantité de fûts</label>
-      <input type="number" name="qty" class="form-control form-control-lg" value="1" min="1" required>
+      <input type="number" name="qty" class="form-control form-control-lg" value="0" min="0">
+      <div class="form-text">Mets 0 si tu prêtes/reprends seulement du matériel.</div>
     </div>
     <div class="col-6 mb-2">
       <label class="form-label">Consigne / fût (€)</label>
       <input type="number" step="0.01" name="deposit_per_keg" class="form-control form-control-lg" value="30">
+      <div class="form-text">Ignoré si quantité = 0.</div>
     </div>
   </div>
 
@@ -98,7 +100,7 @@
 
   <div class="mb-3">
     <label class="form-label">Notes</label>
-    <input name="notes" class="form-control form-control-lg" placeholder="ex: dépôt salle VIP">
+    <input name="notes" class="form-control form-control-lg" placeholder="ex: Barnum 3x3, salle VIP">
   </div>
 
   <button class="btn btn-primary btn-lg w-100">Enregistrer</button>
