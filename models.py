@@ -1,64 +1,61 @@
+# models.py — version SANS ecocup/gobelets
+
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 
 db = SQLAlchemy()
 
-class Client(db.Model):
-    __tablename__ = "clients"
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(255), unique=True, nullable=False)
 
-    movements = db.relationship("Movement", backref="client", lazy=True)
+class Client(db.Model):
+    __tablename__ = "client"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), unique=True, nullable=False)
 
     def __repr__(self):
-        return f"<Client {self.id} {self.name!r}>"
+        return f"<Client {self.name}>"
 
 
 class Product(db.Model):
-    __tablename__ = "products"
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(255), unique=True, nullable=False)
+    __tablename__ = "product"
 
-    variants = db.relationship("Variant", backref="product", lazy=True)
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
 
     def __repr__(self):
-        return f"<Product {self.id} {self.name!r}>"
+        return f"<Product {self.name}>"
 
 
 class Variant(db.Model):
-    __tablename__ = "variants"
-    id = db.Column(db.Integer, primary_key=True)
-    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False, index=True)
-    size_l = db.Column(db.Integer, nullable=False)
-    # Prix catalogue: peut être NULL, on gère côté app avec coalesce
-    price_ttc = db.Column(db.Float, nullable=True)
+    __tablename__ = "variant"
 
-    movements = db.relationship("Movement", backref="variant", lazy=True)
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey("product.id"), nullable=False)
+    volume_l = db.Column(db.Integer, nullable=False)  # ex: 20, 22, 30
+    # consigne sur le fut (si tu utilises une consigne fut — sinon laisse 0)
+    deposit_eur = db.Column(db.Integer, default=0)
+
+    product = db.relationship("Product", backref="variants")
 
     def __repr__(self):
-        return f"<Variant {self.id} prod={self.product_id} {self.size_l}L price={self.price_ttc}>"
+        return f"<Variant {self.product.name} {self.volume_l}L>"
 
 
 class Movement(db.Model):
-    __tablename__ = "movements"
+    __tablename__ = "movement"
+
     id = db.Column(db.Integer, primary_key=True)
+    client_id = db.Column(db.Integer, db.ForeignKey("client.id"), nullable=False)
+    variant_id = db.Column(db.Integer, db.ForeignKey("variant.id"), nullable=False)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    # "OUT" = livraison / sortie ; "IN" = reprise / entrée
+    type = db.Column(db.String(10), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False, default=1)
 
-    # IMPORTANT: était Enum('OUT','IN'). On passe en String(10) pour accepter 'DEFECT'
-    type = db.Column(db.String(10), nullable=False, index=True)  # 'OUT' | 'IN' | 'DEFECT'
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    client_id = db.Column(db.Integer, db.ForeignKey("clients.id"), nullable=False, index=True)
-    variant_id = db.Column(db.Integer, db.ForeignKey("variants.id"), nullable=False, index=True)
-
-    qty = db.Column(db.Integer, nullable=False, default=0)
-
-    # Valorisation saisie au moment du mouvement. Peut être NULL sur anciens enregistrements.
-    unit_price_ttc = db.Column(db.Float, nullable=True)
-    deposit_per_keg = db.Column(db.Float, nullable=True)
-
-    # Notes libres + encodage matériel (||EQ|tireuse=1;co2=0;comptoir=0;tonnelle=0)
-    notes = db.Column(db.Text, nullable=True)
+    client = db.relationship("Client", backref="movements")
+    variant = db.relationship("Variant", backref="movements")
 
     def __repr__(self):
-        return f"<Movement {self.id} {self.type} c={self.client_id} v={self.variant_id} qty={self.qty}>"
+        return f"<Movement {self.type} x{self.quantity} {self.variant} -> {self.client}>"
