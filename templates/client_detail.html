@@ -9,9 +9,15 @@
 </div>
 
 <div class="mb-3">
+  <span class="badge bg-secondary me-2">Fûts en cours chez eux: {{ in_place_total or 0 }}</span>
+  <span class="badge bg-secondary me-2">Fûts livrés cumulés: {{ delivered_qty_cum or 0 }}</span>
   <span class="badge bg-info text-dark me-2">Bière facturée cumulée: {{ '%.0f'|format(beer_billed_cum or 0) }} €</span>
-  <span class="badge bg-warning text-dark me-2">Consignes en jeu: {{ '%.0f'|format(deposit_in_play or 0) }} €</span>
-  <span class="badge bg-secondary">Fûts livrés cumulés: {{ delivered_qty_cum or 0 }}</span>
+  <span class="badge bg-warning text-dark">Consignes en jeu: {{ '%.0f'|format(deposit_in_play or 0) }} €</span>
+</div>
+
+<div class="d-flex gap-2 mb-3">
+  <a class="btn btn-outline-primary" href="{{ url_for('movement_new', client_id=client.id) }}">+ Livraison / Reprise ici</a>
+  <a class="btn btn-outline-secondary" href="{{ url_for('clients') }}">Changer de client</a>
 </div>
 
 <h6 class="mb-2">Stock actuel (par produit)</h6>
@@ -50,9 +56,9 @@
   </thead>
   <tbody>
     {% for m in movements %}
-      {% set sign = 1 if m.type == 'OUT' else 0 %} {# IN ne déduit pas la bière #}
+      {% set sign_beer = 1 if m.type == 'OUT' else 0 %} {# IN ne déduit pas la bière #}
       {% set unit = m.unit_price_ttc if m.unit_price_ttc is not none else 0 %}
-      {% set beer_total = sign * m.qty * unit %}
+      {% set beer_total = sign_beer * m.qty * unit %}
       {% set deposit_total = (1 if m.type=='OUT' else -1) * m.qty * m.deposit_per_keg %}
       <tr>
         <td>{{ m.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
@@ -81,5 +87,5 @@
 </table>
 </div>
 
-<a class="btn btn-primary w-100 btn-lg mt-3" href="{{ url_for('movement_new') }}">+ Enregistrer une livraison / reprise</a>
+<a class="btn btn-primary w-100 btn-lg mt-3" href="{{ url_for('movement_new', client_id=client.id) }}">+ Enregistrer une livraison / reprise</a>
 {% endblock %}
