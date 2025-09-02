@@ -34,7 +34,15 @@ DEFAULT_VARIANTS = [
     ("Cidre Val de Rance", 20, 96),
 ]
 
-EQ_KEYS = ("tireuse", "co2", "comptoir", "tonnelle")
+# Matériel encodé dans Movement.notes : ||EQ|tireuse=1;co2=2;comptoir=0;tonnelle=1;ecocup=50
+EQ_KEYS = ("tireuse", "co2", "comptoir", "tonnelle", "ecocup")
+
+# Produits techniques Ecocup
+ECOCUP_WASH_NAME = "Ecocup lavage"
+ECOCUP_LOSS_NAME = "Ecocup perdu"
+ECOCUP_WASH_PRICE = 0.10  # €/gobelet prêté
+ECOCUP_LOSS_PRICE = 1.00  # €/gobelet manquant au retour
+
 
 # --------- Initialisation catalogue ----------
 def seed_if_empty():
@@ -52,7 +60,9 @@ def seed_if_empty():
             db.session.add(Variant(product_id=prods[name].id, size_l=size, price_ttc=price))
         db.session.commit()
 
+
 def get_or_create_equipment_placeholder():
+    """Variant spécial pour mouvements 'matériel seul' (0L, 0€)."""
     prod = Product.query.filter(func.lower(Product.name) == "matériel seul").first()
     if not prod:
         prod = Product(name="Matériel seul")
@@ -66,7 +76,41 @@ def get_or_create_equipment_placeholder():
         db.session.commit()
     return v
 
+
+def get_or_create_ecocup_variants():
+    """Crée (si besoin) Ecocup lavage (0L, 0.10€) et Ecocup perdu (0L, 1.00€)."""
+    # Lavage
+    prod_w = Product.query.filter(func.lower(Product.name) == ECOCUP_WASH_NAME.lower()).first()
+    if not prod_w:
+        prod_w = Product(name=ECOCUP_WASH_NAME)
+        db.session.add(prod_w); db.session.flush()
+    var_w = Variant.query.filter_by(product_id=prod_w.id, size_l=0).first()
+    if not var_w:
+        var_w = Variant(product_id=prod_w.id, size_l=0, price_ttc=ECOCUP_WASH_PRICE)
+        db.session.add(var_w); db.session.flush()
+    else:
+        if var_w.price_ttc != ECOCUP_WASH_PRICE:
+            var_w.price_ttc = ECOCUP_WASH_PRICE; db.session.flush()
+
+    # Perte
+    prod_l = Product.query.filter(func.lower(Product.name) == ECOCUP_LOSS_NAME.lower()).first()
+    if not prod_l:
+        prod_l = Product(name=ECOCUP_LOSS_NAME)
+        db.session.add(prod_l); db.session.flush()
+    var_l = Variant.query.filter_by(product_id=prod_l.id, size_l=0).first()
+    if not var_l:
+        var_l = Variant(product_id=prod_l.id, size_l=0, price_ttc=ECOCUP_LOSS_PRICE)
+        db.session.add(var_l); db.session.flush()
+    else:
+        if var_l.price_ttc != ECOCUP_LOSS_PRICE:
+            var_l.price_ttc = ECOCUP_LOSS_PRICE; db.session.flush()
+
+    db.session.commit()
+    return var_w, var_l
+
+
 def ensure_catalog_fixes():
+    """Corrige le catalogue existant (prix Coreff Ambrée + placeholders)."""
     prod = Product.query.filter(func.lower(Product.name) == "coreff ambrée").first()
     if prod:
         v = Variant.query.filter_by(product_id=prod.id, size_l=22).first()
@@ -75,8 +119,11 @@ def ensure_catalog_fixes():
             db.session.add(v)
             db.session.commit()
     get_or_create_equipment_placeholder()
+    get_or_create_ecocup_variants()
+
 
 def ensure_data_consistency():
+    """Évite les NULL anciens qui font planter les calculs."""
     db.session.execute(
         update(Movement).where(Movement.unit_price_ttc.is_(None)).values(unit_price_ttc=0.0)
     )
@@ -84,6 +131,7 @@ def ensure_data_consistency():
         update(Movement).where(Movement.deposit_per_keg.is_(None)).values(deposit_per_keg=0.0)
     )
     db.session.commit()
+
 
 # --------- Encodage / Décodage matériel ----------
 def pack_equipment(notes_text, eq_dict):
@@ -97,6 +145,7 @@ def pack_equipment(notes_text, eq_dict):
         eq_block = "||EQ|" + ";".join(parts)
         return (clean + " " + eq_block).strip()
     return clean
+
 
 def unpack_equipment(notes_text):
     eq = {k: 0 for k in EQ_KEYS}
@@ -120,18 +169,21 @@ def unpack_equipment(notes_text):
         return eq, human
     return eq, txt.strip()
 
+
 def sum_equipment_for_client(client_id: int):
+    """Somme nette du matériel chez le client (OUT +, IN/DEFECT -)."""
     totals = {k: 0 for k in EQ_KEYS}
     movements = Movement.query.filter_by(client_id=client_id).all()
     for m in movements:
         eq, _ = unpack_equipment(m.notes)
-        sign = 1 if m.type == 'OUT' else -1  # DEFECT agit comme IN côté matériel
+        sign = 1 if m.type == 'OUT' else -1
         for k in EQ_KEYS:
             totals[k] += sign * int(eq.get(k, 0) or 0)
     for k in EQ_KEYS:
         if totals[k] < 0:
             totals[k] = 0
     return totals
+
 
 # --------- Expressions SQL réutilisables ----------
 BEER_VALUE_EXPR = case(
@@ -151,6 +203,7 @@ STOCK_EXPR = case(
     (Movement.type == 'DEFECT', -Movement.qty),
     else_=0
 )
+
 
 # --------- App Factory ----------
 def create_app():
@@ -195,12 +248,13 @@ def create_app():
          .group_by(Client.id, Client.name) \
          .order_by(Client.name).all()
 
+        # Matériel prêté par client
         equipment_by_client = {c.id: {k: 0 for k in EQ_KEYS} for c in Client.query.all()}
         for m in Movement.query.with_entities(Movement.client_id, Movement.type, Movement.notes).all():
             if m.client_id is None:
                 continue
             eq, _ = unpack_equipment(m.notes)
-            sign = 1 if m.type == 'OUT' else -1
+            sign = 1 if m.type == 'OUT' else -1  # DEFECT agit comme IN côté matériel
             bucket = equipment_by_client.setdefault(m.client_id, {k: 0 for k in EQ_KEYS})
             for k in EQ_KEYS:
                 bucket[k] += sign * int(eq.get(k, 0) or 0)
@@ -297,6 +351,7 @@ def create_app():
                 flash("Client manquant.", "danger")
                 return redirect(url_for('movement_new'))
 
+            # Produit/variant: catalogue, hors catalogue, ou matériel seul
             custom_name = (request.form.get('custom_name') or '').strip()
             variant_id = None
             variant = None
@@ -330,24 +385,29 @@ def create_app():
                 if variant_id:
                     variant = Variant.query.get_or_404(variant_id)
 
+            # Matériel / Ecocup
             eq = {
                 "tireuse": int(request.form.get('eq_tireuse', 0) or 0),
                 "co2": int(request.form.get('eq_co2', 0) or 0),
                 "comptoir": int(request.form.get('eq_comptoir', 0) or 0),
                 "tonnelle": int(request.form.get('eq_tonnelle', 0) or 0),
+                "ecocup": int(request.form.get('eq_ecocup', 0) or 0),
             }
             any_equipment = any(v > 0 for v in eq.values())
 
+            # Si ni produit ni matériel -> erreur
             if not variant_id and not any_equipment:
                 flash("Choisis une référence ou saisis du matériel prêté/repris.", "danger")
                 return redirect(url_for('movement_new', client_id=client_id))
 
+            # Si matériel seul -> placeholder "Matériel seul (0L)"
             if any_equipment and not variant_id:
                 variant = get_or_create_equipment_placeholder()
                 variant_id = variant.id
 
-            qty = int(request.form.get('qty', 0))
-            mtype = request.form['type']  # 'OUT' | 'IN' | 'DEFECT'
+            # Quantité / Type / Date
+            qty = int(request.form.get('qty', 0))   # autorise 0
+            mtype = request.form['type']            # 'OUT' | 'IN' | 'DEFECT'
             created_at = datetime.utcnow()
             date_str = (request.form.get('when') or '').strip()
             if date_str:
@@ -357,6 +417,7 @@ def create_app():
                     flash("Format de date invalide.", "danger")
                     return redirect(url_for('movement_new', client_id=client_id))
 
+            # Prix / Consigne
             unit_price_raw = (request.form.get('unit_price_ttc') or '').strip()
             deposit_per_keg = float(request.form.get('deposit_per_keg', 30) or 30)
 
@@ -365,13 +426,11 @@ def create_app():
                 deposit_per_keg = 0.0
             else:
                 if custom_name:
-                    unit_price = unit_price if unit_price_raw == "" else float(unit_price_raw)
+                    unit_price = float(unit_price_raw) if unit_price_raw else unit_price  # unit_price défini plus haut
                 else:
-                    if unit_price_raw:
-                        unit_price = float(unit_price_raw)
-                    else:
-                        unit_price = (variant.price_ttc if variant and variant.price_ttc is not None else 0.0)
+                    unit_price = float(unit_price_raw) if unit_price_raw else (variant.price_ttc if variant and variant.price_ttc is not None else 0.0)
 
+            # --- Validations anti-négatif pour fûts et matériel ---
             if mtype in ('IN', 'DEFECT'):
                 if qty > 0:
                     in_place_variant = db.session.query(func.coalesce(func.sum(STOCK_EXPR), 0)) \
@@ -382,15 +441,19 @@ def create_app():
                 if any_equipment:
                     current_eq = sum_equipment_for_client(client_id)
                     for k in EQ_KEYS:
+                        if k == "ecocup":
+                            # on gère ecocup plus bas (car manquants facturés)
+                            continue
                         want = int(eq.get(k, 0) or 0)
                         if want > current_eq.get(k, 0):
                             flash(f"Impossible de reprendre {want} {k}(s) — dispo: {current_eq.get(k, 0)}.", "danger")
                             return redirect(url_for('movement_new', client_id=client_id))
 
+            # Enregistrement principal (+ écocups calculés)
             human_notes = (request.form.get('notes', '').strip() or "")
             notes = pack_equipment(human_notes, eq)
 
-            m = Movement(
+            main_m = Movement(
                 created_at=created_at,
                 type=mtype,
                 client_id=client_id,
@@ -400,7 +463,56 @@ def create_app():
                 deposit_per_keg=deposit_per_keg,
                 notes=notes
             )
-            db.session.add(m)
+            db.session.add(main_m)
+            db.session.flush()  # id dispo si besoin
+
+            # --- Règles Ecocup ---
+            var_wash, var_loss = get_or_create_ecocup_variants()
+
+            if mtype == 'OUT':
+                # Facture lavage 0,10 €/écocup prêté (si eq_ecocup > 0)
+                ec_out = eq.get("ecocup", 0) or 0
+                if ec_out > 0:
+                    db.session.add(Movement(
+                        created_at=created_at,
+                        type='OUT',
+                        client_id=client_id,
+                        variant_id=var_wash.id,
+                        qty=ec_out,
+                        unit_price_ttc=ECOCUP_WASH_PRICE,
+                        deposit_per_keg=0.0,
+                        notes=f"Lavage Ecocup {ec_out}u (lié au mouvement #{main_m.id})"
+                    ))
+
+            if mtype in ('IN', 'DEFECT'):
+                # On autorise à "régler" les manquants: si le client rend moins que ce qu'il a.
+                current_ec = sum_equipment_for_client(client_id).get("ecocup", 0)
+                returned = eq.get("ecocup", 0) or 0
+                if returned > current_ec:
+                    # clamp (normalement bloqué avant, mais sécurité)
+                    returned = current_ec
+
+                missing = max(0, current_ec - returned)
+
+                if missing > 0:
+                    # 1) Facturer 1€ par gobelet manquant
+                    db.session.add(Movement(
+                        created_at=created_at,
+                        type='OUT',
+                        client_id=client_id,
+                        variant_id=var_loss.id,
+                        qty=missing,
+                        unit_price_ttc=ECOCUP_LOSS_PRICE,
+                        deposit_per_keg=0.0,
+                        notes=f"Ecocup manquant {missing}u (lié au mouvement #{main_m.id})"
+                    ))
+                    # 2) Ajuster l'équipement pour remettre à zéro chez le client :
+                    #    on transforme la note du mouvement principal pour indiquer
+                    #    qu'on "retire" returned + missing côté matériel.
+                    eq_adj = dict(eq)
+                    eq_adj["ecocup"] = returned + missing
+                    main_m.notes = pack_equipment(human_notes + ((" — dont " + str(missing) + " manquants") if human_notes else f"Dont {missing} manquants"), eq_adj)
+
             db.session.commit()
             flash('Mouvement enregistré ✅', "success")
             return redirect(url_for('client_detail', client_id=client_id))
@@ -431,5 +543,6 @@ def create_app():
         return render_template('products.html', rows=rows)
 
     return app
+
 
 app = create_app()
