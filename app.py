@@ -30,11 +30,10 @@ DEFAULT_VARIANTS = [
     ("Coreff IPA", 30, 127),
     ("Coreff Blanche", 20, 81),
     ("Coreff Rousse", 20, 82),   # 20L uniquement
-    ("Coreff Ambrée", 22, 78),   # 22L uniquement -> PRIX = 78 €
+    ("Coreff Ambrée", 22, 78),   # 22L uniquement -> PRIX = 78€
     ("Cidre Val de Rance", 20, 96),
 ]
 
-# Clés de matériel codées dans notes
 EQ_KEYS = ("tireuse", "co2", "comptoir", "tonnelle")
 
 def seed_if_empty():
@@ -52,11 +51,11 @@ def seed_if_empty():
 
 def ensure_catalog_fixes():
     """Corrige/complète le catalogue existant sans migration."""
-    # Coreff Ambrée 22L = 78€ si manquant ou différent
+    # Coreff Ambrée 22L = 78€ si manquant
     prod = Product.query.filter(func.lower(Product.name) == "coreff ambrée").first()
     if prod:
         v = Variant.query.filter_by(product_id=prod.id, size_l=22).first()
-        if v and (v.price_ttc is None or float(v.price_ttc) != 78.0):
+        if v and (v.price_ttc is None or float(v.price_ttc) == 0.0 or float(v.price_ttc) != 78.0):
             v.price_ttc = 78.0
             db.session.add(v)
             db.session.commit()
@@ -115,7 +114,7 @@ def sum_equipment_for_client(client_id: int) -> dict:
     movements = Movement.query.filter_by(client_id=client_id).all()
     for m in movements:
         eq, _ = unpack_equipment(m.notes)
-        sign = 1 if m.type == 'OUT' else -1  # DEFECT agit comme IN côté matériel (on rentre)
+        sign = 1 if m.type == 'OUT' else -1
         for k in EQ_KEYS:
             totals[k] += sign * int(eq.get(k, 0) or 0)
     for k in EQ_KEYS:
@@ -133,7 +132,7 @@ def create_app():
     with app.app_context():
         db.create_all()
         seed_if_empty()
-        ensure_catalog_fixes()
+        ensure_catalog_fixes()  # << corrige Coreff Ambrée & placeholder
 
     @app.errorhandler(404)
     def not_found(e): return render_template('404.html'), 404
@@ -141,41 +140,29 @@ def create_app():
     @app.errorhandler(500)
     def server_err(e): return render_template('500.html'), 500
 
-    # --- Expressions de valorisation avec DEFECT ---
-    # BIÈRE: OUT +, IN 0, DEFECT -
-    beer_value_expr = case(
-        (Movement.type == 'OUT', Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)),
-        (Movement.type == 'DEFECT', -Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)),
-        else_=0.0
-    )
-    # CONSIGNE: OUT +, IN -, DEFECT -
-    deposit_value_expr = case(
-        (Movement.type == 'OUT', Movement.qty * Movement.deposit_per_keg),
-        (Movement.type == 'IN', -Movement.qty * Movement.deposit_per_keg),
-        (Movement.type == 'DEFECT', -Movement.qty * Movement.deposit_per_keg),
-        else_=0.0
-    )
-    # STOCK: OUT +, IN -, DEFECT -
-    stock_expr = case(
-        (Movement.type == 'OUT', Movement.qty),
-        (Movement.type == 'IN', -Movement.qty),
-        (Movement.type == 'DEFECT', -Movement.qty),
-        else_=0
-    )
-
     @app.route('/')
     def index():
+        # BIÈRE: OUT seulement ; CONSIGNE: OUT +, IN -
+        beer_value_expr = case(
+            (Movement.type == 'OUT', Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)),
+            else_=0.0
+        )
+        deposit_value_expr = case(
+            (Movement.type == 'OUT', Movement.qty * Movement.deposit_per_keg),
+            else_=-Movement.qty * Movement.deposit_per_keg
+        )
         last_delivery = func.max(case((Movement.type == 'OUT', Movement.created_at), else_=None))
-        last_pickup   = func.max(case(((Movement.type == 'IN') | (Movement.type == 'DEFECT'), Movement.created_at), else_=None))
+        last_pickup   = func.max(case((Movement.type == 'IN',  Movement.created_at), else_=None))
 
-        # Totaux livrés cumulés (compte seulement OUT)
         total_delivered_qty = func.coalesce(func.sum(case((Movement.type=='OUT', Movement.qty), else_=0)), 0)
-        total_beer_billed   = func.coalesce(func.sum(beer_value_expr), 0.0)
+        total_beer_billed   = func.coalesce(func.sum(case(
+            (Movement.type=='OUT', Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)), else_=0.0
+        )), 0.0)
 
         rows = db.session.query(
             Client.id, Client.name,
             func.coalesce(func.sum(case((Movement.type=='OUT', Movement.qty), else_=0)),0).label('out_qty'),
-            func.coalesce(func.sum(case(((Movement.type=='IN') | (Movement.type=='DEFECT'), Movement.qty), else_=0)),0).label('in_qty'),
+            func.coalesce(func.sum(case((Movement.type=='IN',  Movement.qty), else_=0)),0).label('in_qty'),
             func.coalesce(func.sum(deposit_value_expr), 0.0).label('deposit_in_play'),
             func.coalesce(func.sum(beer_value_expr), 0.0).label('beer_billed_cum'),
             last_delivery.label('last_delivery_at'),
@@ -190,7 +177,7 @@ def create_app():
         for m in Movement.query.with_entities(Movement.client_id, Movement.type, Movement.notes).all():
             if m.client_id is None: continue
             eq, _ = unpack_equipment(m.notes)
-            sign = 1 if m.type == 'OUT' else -1  # DEFECT agit comme IN ici
+            sign = 1 if m.type == 'OUT' else -1
             bucket = equipment_by_client.setdefault(m.client_id, {k:0 for k in EQ_KEYS})
             for k in EQ_KEYS:
                 bucket[k] += sign * int(eq.get(k, 0) or 0)
@@ -227,7 +214,7 @@ def create_app():
         q = db.session.query(
             Variant.id, Product.name.label('product_name'), Variant.size_l,
             func.coalesce(func.sum(case((Movement.type=='OUT', Movement.qty), else_=0)),0).label('out_qty'),
-            func.coalesce(func.sum(case(((Movement.type=='IN') | (Movement.type=='DEFECT'), Movement.qty), else_=0)),0).label('in_qty'),
+            func.coalesce(func.sum(case((Movement.type=='IN',  Movement.qty), else_=0)),0).label('in_qty'),
             func.min(Variant.price_ttc).label('catalog_price')
         ).join(Product, Product.id==Variant.product_id)\
          .join(Movement, Movement.variant_id==Variant.id, isouter=True)\
@@ -245,11 +232,17 @@ def create_app():
 
         # Totaux
         beer_billed_cum = db.session.query(
-            func.coalesce(func.sum(beer_value_expr), 0.0)
+            func.coalesce(func.sum(case(
+                (Movement.type=='OUT', Movement.qty * func.coalesce(Movement.unit_price_ttc, 0.0)),
+                else_=0.0
+            )), 0.0)
         ).filter(Movement.client_id==client_id).scalar()
 
         deposit_in_play = db.session.query(
-            func.coalesce(func.sum(deposit_value_expr), 0.0)
+            func.coalesce(func.sum(case(
+                (Movement.type=='OUT', Movement.qty * Movement.deposit_per_keg),
+                else_=-Movement.qty * Movement.deposit_per_keg
+            )), 0.0)
         ).filter(Movement.client_id==client_id).scalar()
 
         delivered_qty_cum = db.session.query(
@@ -257,7 +250,10 @@ def create_app():
         ).filter(Movement.client_id==client_id).scalar()
 
         in_place_total = db.session.query(
-            func.coalesce(func.sum(stock_expr), 0)
+            func.coalesce(func.sum(case(
+                (Movement.type=='OUT', Movement.qty),
+                else_=-Movement.qty
+            )), 0)
         ).filter(Movement.client_id==client_id).scalar()
 
         equipment_totals = sum_equipment_for_client(client_id)
@@ -265,7 +261,7 @@ def create_app():
         last_delivery_at = db.session.query(func.max(Movement.created_at))\
             .filter(Movement.client_id==client_id, Movement.type=='OUT').scalar()
         last_pickup_at = db.session.query(func.max(Movement.created_at))\
-            .filter(Movement.client_id==client_id, (Movement.type=='IN') | (Movement.type=='DEFECT')).scalar()
+            .filter(Movement.client_id==client_id, Movement.type=='IN').scalar()
 
         return render_template('client_detail.html',
                                client=client, rows=rows, movements=display_movs,
@@ -344,7 +340,7 @@ def create_app():
 
             # 2) Quantité, Type, Date
             qty = int(request.form.get('qty', 0))  # autorise 0 pour matériel seul
-            mtype = request.form['type']  # 'OUT' | 'IN' | 'DEFECT'
+            mtype = request.form['type']  # 'OUT' ou 'IN'
             created_at = datetime.utcnow()
             date_str = (request.form.get('when') or '').strip()
             if date_str:
@@ -374,11 +370,14 @@ def create_app():
                         unit_price = (variant.price_ttc if variant and variant.price_ttc is not None else 0.0)
 
             # 3) Validations anti-négatif
-            if mtype in ('IN', 'DEFECT'):
+            if mtype == 'IN':
                 # Fûts : seulement si qty>0
                 if qty > 0:
                     in_place_variant = db.session.query(
-                        func.coalesce(func.sum(stock_expr), 0)
+                        func.coalesce(func.sum(case(
+                            (Movement.type=='OUT', Movement.qty),
+                            else_=-Movement.qty
+                        )), 0)
                     ).filter(and_(Movement.client_id==client_id, Movement.variant_id==variant_id)).scalar()
                     if qty > max(in_place_variant, 0):
                         flash(f"Impossible de reprendre {qty} fût(s) — stock dispo: {max(in_place_variant, 0)}.", "danger")
@@ -402,7 +401,7 @@ def create_app():
                 client_id=client_id,
                 variant_id=variant_id,
                 qty=qty,
-                unit_price_ttc=unit_price,     # OUT +, DEFECT - pour bière ; IN ignoré pour bière
+                unit_price_ttc=unit_price,     # OUT valorise bière ; IN ignoré pour la bière
                 deposit_per_keg=deposit_per_keg,
                 notes=notes
             )
