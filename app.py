@@ -3,7 +3,7 @@ from datetime import datetime, date, time
 from flask import Flask, render_template, request, redirect, url_for, flash, session, Response
 from sqlalchemy import func
 
-from models import db, Client, Product, Variant, Movement
+from models import db, Client, Product, Variant, Movement, ReorderRule
 from seed import seed_if_empty
 import utils as U
 
@@ -47,7 +47,7 @@ def create_app():
         s = "+" if v >= 0 else "−"
         return f"{s}{abs(v):,.2f} €".replace(",", " ").replace(".", ",")
 
-    # ----------------- Helper: fûts ouverts chez un client -----------------
+    # ----------------- Helper: fûts “ouverts” par variante chez un client -----------------
     def _open_kegs_by_variant(client_id: int):
         out_rows = dict(
             db.session.query(Movement.variant_id, func.coalesce(func.sum(Movement.qty), 0))
@@ -146,7 +146,7 @@ def create_app():
         )
         return render_template("catalog.html", variants=variants)
 
-    # ------------- Saisie (ex-mouvement pas à pas) -------------
+    # ------------- Saisie (ex “mouvement pas à pas”) -------------
     @app.route("/movement/new", methods=["GET"])
     def movement_new():
         return redirect(url_for("movement_wizard"))
@@ -157,7 +157,7 @@ def create_app():
             session["wiz"] = {}
         wiz = session["wiz"]
 
-        # Préselection client ?
+        # Préselection client éventuelle
         q_client_id = request.args.get("client_id", type=int)
         if q_client_id:
             wiz["client_id"] = q_client_id
@@ -166,7 +166,7 @@ def create_app():
         if request.method == "GET":
             step = int(request.args.get("step", 1))
             if step == 1:
-                # Champ date vide par défaut (pas de pré-remplissage)
+                # Date non pré-remplie
                 return render_template("movement_wizard.html", step=1, wiz=wiz)
             elif step == 2:
                 clients = Client.query.order_by(Client.name.asc()).all()
@@ -181,7 +181,6 @@ def create_app():
                     .filter(~Product.name.ilike("%ecocup%"), ~Product.name.ilike("%gobelet%"))
                     .order_by(Product.name, Variant.size_l)
                 )
-                # Reprise : limiter aux références encore "chez le client"
                 if wiz.get("type") == "IN" and wiz.get("client_id"):
                     open_map = _open_kegs_by_variant(wiz["client_id"])
                     allowed_ids = [vid for vid, openq in open_map.items() if openq > 0]
@@ -202,8 +201,7 @@ def create_app():
                 flash("Type invalide.", "warning")
                 return redirect(url_for("movement_wizard", step=1))
             wiz["type"] = mtype
-            # si vide -> None ; on traitera plus tard
-            wiz["date"] = request.form.get("date") or None
+            wiz["date"] = request.form.get("date") or None  # peut rester vide -> date de saisie
             session.modified = True
             return redirect(url_for("movement_wizard", step=2))
 
@@ -225,7 +223,7 @@ def create_app():
                 flash("Informations incomplètes.", "warning")
                 return redirect(url_for("movement_wizard", step=1))
 
-            # Date finale : si vide -> date de saisie (now)
+            # Date finale : vide -> date de saisie (now)
             if wiz.get("date"):
                 try:
                     y, m_, d2 = [int(x) for x in wiz["date"].split("-")]
@@ -235,14 +233,13 @@ def create_app():
             else:
                 created_at = U.now_utc()
 
-            # Listes
             variant_ids = request.form.getlist("variant_id")
             qtys = request.form.getlist("qty")
             unit_prices = request.form.getlist("unit_price_ttc")
             deposits = request.form.getlist("deposit_per_keg")
             notes = request.form.get("notes") or None
 
-            # Matériel structuré (en note)
+            # Matériel prêté/repris (inséré en note)
             t = request.form.get("eq_tireuse", type=int)
             c2 = request.form.get("eq_co2", type=int)
             cp = request.form.get("eq_comptoir", type=int)
@@ -258,11 +255,9 @@ def create_app():
             mtype = wiz["type"]
             client_id = wiz["client_id"]
 
-            # Reprise: solde autorisé
             open_map = _open_kegs_by_variant(client_id) if mtype == "IN" else {}
-
             created = 0
-            violations = []  # (label, maxq)
+            violations = []
 
             for i, vid in enumerate(variant_ids):
                 try:
@@ -292,7 +287,7 @@ def create_app():
                 if not v:
                     continue
 
-                # "Matériel seul" => forcer 0 partout et neutre en stock
+                # “Matériel seul” => forcer 0 partout
                 pname = (v.product.name if v and v.product else "") or ""
                 is_equipment_only = "matériel" in pname.lower() and "seul" in pname.lower()
                 if is_equipment_only:
@@ -300,10 +295,10 @@ def create_app():
                     up = 0.0
                     dep = 0.0
                 else:
-                    if up is None and v.price_ttc is not None:
+                    if up is None and (v.price_ttc is not None):
                         up = v.price_ttc
                     if dep is None:
-                        dep = U.DEFAULT_DEPOSIT  # 30.0 par défaut
+                        dep = U.DEFAULT_DEPOSIT  # 30€
 
                     if mtype == "IN":
                         open_q = int(open_map.get(vid_int, 0))
@@ -353,7 +348,8 @@ def create_app():
     @app.route("/movement/<int:movement_id>/delete", methods=["POST"])
     def movement_delete(movement_id):
         m = Movement.query.get_or_404(movement_id)
-        U.apply_inventory_effect_reverse(m.type, m.variant_id, m.qty or 0)
+        # Correction : le helper existant s’appelle revert_inventory_effect
+        U.revert_inventory_effect(m.type, m.variant_id, m.qty or 0)
         client_id = m.client_id
         db.session.delete(m)
         db.session.commit()
@@ -365,31 +361,52 @@ def create_app():
     def stock():
         if request.method == "POST":
             changed = 0
+
+            # 1) QTY_*  -> Inventory
             for key, val in request.form.items():
-                if key.startswith("qty_"):
-                    try:
-                        vid = int(key.split("_", 1)[1])
-                        qty = int(val or 0)
-                    except Exception:
-                        continue
-                    inv = U.get_or_create_inventory(vid)
-                    if inv.qty != qty:
-                        inv.qty = qty
-                        changed += 1
-                elif key.startswith("min_"):
-                    try:
-                        vid = int(key.split("_", 1)[1])
-                        minq = int(val or 0)
-                    except Exception:
-                        continue
-                    rule = U.get_or_create_reorder_rule(vid)
+                if not key.startswith("qty_"):
+                    continue
+                try:
+                    vid = int(key.split("_", 1)[1])
+                except Exception:
+                    continue
+                try:
+                    qty = int(val or 0)
+                except Exception:
+                    qty = 0
+                inv = U.get_or_create_inventory(vid)
+                if inv.qty != qty:
+                    inv.qty = qty
+                    changed += 1
+
+            # 2) MIN_* -> ReorderRule (création si absent)
+            for key, val in request.form.items():
+                if not key.startswith("min_"):
+                    continue
+                try:
+                    vid = int(key.split("_", 1)[1])
+                except Exception:
+                    continue
+                try:
+                    minq = int(val or 0)
+                except Exception:
+                    minq = 0
+
+                rule = ReorderRule.query.filter_by(variant_id=vid).first()
+                if not rule:
+                    rule = ReorderRule(variant_id=vid, min_qty=minq)
+                    db.session.add(rule)
+                    changed += 1
+                else:
                     if rule.min_qty != minq:
                         rule.min_qty = minq
                         changed += 1
+
             db.session.commit()
             flash(f"Inventaire enregistré ({changed} mise(s) à jour).", "success")
             return redirect(url_for("stock"))
 
+        # GET
         rows = U.get_stock_items()
         alerts = U.compute_reorder_alerts()
         return render_template("stock.html", rows=rows, alerts=alerts)
