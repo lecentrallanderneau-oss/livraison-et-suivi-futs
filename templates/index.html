@@ -1,39 +1,106 @@
 {% extends "base.html" %}
-{% import "_macros.html" as ui %}
-{% block title %}Fûts · Accueil{% endblock %}
+{% block title %}Accueil{% endblock %}
+
 {% block content %}
+<div class="container py-3">
 
-{{ ui.alerts_list(alerts) }}
-
-<div class="d-flex align-items-center justify-content-between">
-  <h1 class="h3 mb-0">Stock par client</h1>
-  <a href="{{ url_for('movement_wizard') }}" class="btn btn-primary">+ Saisie</a>
-</div>
-<hr>
-
-<div class="card-list">
-  {% for c in cards %}
-    <div class="row-item">
-      <div class="d-flex align-items-start justify-content-between">
-        <div>
-          <a class="client-link" href="{{ url_for('client_detail', client_id=c.id) }}">{{ c.name }}</a>
-          <div class="text-muted small">
-            {% if c.last_out %}Dernière livraison : {{ c.last_out|dt }} · {% endif %}
-            {% if c.last_in %}Dernière reprise : {{ c.last_in|dt }}{% endif %}
-          </div>
+  {# Flashs #}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
         </div>
-        <div class="text-end">
-          <div class="mb-1">
-            <span class="chip chip-gray">{{ c.kegs }} fût(s)</span>
-            <span class="chip chip-cyan">Bière facturée: {{ '%.2f'|format(c.beer_eur or 0) }} €</span>
-            <span class="chip chip-amber">Consignes: {{ '%.2f'|format(c.deposit_eur or 0) }} €</span>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  <div class="row g-3">
+
+    {# ---- Existant : alertes réassort (conservé) ---- #}
+    <div class="col-12">
+      <h4 class="mb-2">Alertes réassort</h4>
+      {% if low_stock and low_stock|length > 0 %}
+        <ul class="list-group">
+          {% for v, inv, rule in low_stock %}
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+              <span><strong>{{ v.product.name }} — {{ v.name }}</strong> (Stock: {{ inv.qty }}, Mini: {{ rule.min_qty }})</span>
+              <span class="badge bg-danger">À commander</span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="alert alert-success mb-0">Aucune alerte de réassort.</div>
+      {% endif %}
+    </div>
+
+    {# ---- NOUVEAU : Éco-cups ---- #}
+    <div class="col-12">
+      <div class="card border-2">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h4 class="card-title mb-0">Éco-cups (aperçu rapide)</h4>
+            <a class="btn btn-sm btn-primary" href="{{ url_for('ecocups') }}">Saisir une opération</a>
           </div>
+
+          <div class="row g-3">
+            <div class="col-md-4">
+              <div class="border rounded p-3 h-100">
+                <h6 class="text-muted">Aujourd’hui</h6>
+                <div class="display-6">{{ day_ecocup_summary.total|round(2) }} €</div>
+                <div class="small mt-1">
+                  Prêtés : {{ day_ecocup_summary.loaned }} — Rendus : {{ day_ecocup_summary.returned }}<br>
+                  Pertes : {{ day_ecocup_summary.lost_amount|round(2) }} € — Lavage : {{ day_ecocup_summary.wash_amount|round(2) }} €
+                </div>
+              </div>
+            </div>
+
+            <div class="col-md-8">
+              <div class="border rounded p-3">
+                <h6 class="text-muted mb-2">Dernières opérations</h6>
+                {% if last_ecocup_ops and last_ecocup_ops|length > 0 %}
+                  <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0">
+                      <thead>
+                        <tr>
+                          <th>Date</th>
+                          <th>Client</th>
+                          <th class="text-end">Prêtés</th>
+                          <th class="text-end">Rendus</th>
+                          <th class="text-end">Pertes</th>
+                          <th class="text-end">Lavage</th>
+                          <th class="text-end">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {% for op in last_ecocup_ops %}
+                          <tr>
+                            <td>{{ op.op_date.strftime("%d/%m/%Y %H:%M") }}</td>
+                            <td>{{ op.client.name }}</td>
+                            <td class="text-end">{{ op.qty_loaned }}</td>
+                            <td class="text-end">{{ op.qty_returned }}</td>
+                            <td class="text-end">{{ op.lost_amount|round(2) }} €</td>
+                            <td class="text-end">{{ op.wash_amount|round(2) }} €</td>
+                            <td class="text-end"><strong>{{ op.total_amount|round(2) }} €</strong></td>
+                          </tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                  </div>
+                {% else %}
+                  <div class="text-muted">Aucune opération enregistrée pour l’instant.</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+
         </div>
-        {{ ui.equipment_badges(c.equipment) }}
       </div>
     </div>
-  {% else %}
-    <div class="row-item text-center text-muted">Aucun client.</div>
-  {% endfor %}
+
+    {# ---- Tu peux avoir ici tes autres blocs existants (clients, consignes, matériel, etc.) ---- #}
+
+  </div>
 </div>
 {% endblock %}
