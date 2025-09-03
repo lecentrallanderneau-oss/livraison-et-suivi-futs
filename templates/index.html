@@ -1,18 +1,9 @@
 {% extends "base.html" %}
+{% import "_macros.html" as ui %}
 {% block title %}Fûts · Accueil{% endblock %}
 {% block content %}
 
-{% if alerts and alerts|length > 0 %}
-<div class="alert alert-warning d-flex flex-column gap-1">
-  <div class="fw-bold">⚠️ Réassort conseillé</div>
-  <ul class="mb-0">
-    {% for a in alerts %}
-      <li>{{ a.product.name }} — {{ a.variant.size_l }} L : en stock {{ a.qty }}, mini {{ a.min_qty }}, à commander {{ a.need }}</li>
-    {% endfor %}
-  </ul>
-  <a href="{{ url_for('stock') }}" class="small">Mettre à jour l'inventaire ›</a>
-</div>
-{% endif %}
+{{ ui.alerts_list(alerts) }}
 
 <div class="d-flex align-items-center justify-content-between">
   <h1 class="h3 mb-0">Stock par client</h1>
@@ -41,20 +32,7 @@
           </div>
         </div>
 
-        <!-- Matériel prêté (visuel) -->
-        {% set eq = c.equipment %}
-        {% set has_eq = (eq.tireuse>0 or eq.co2>0 or eq.comptoir>0 or eq.tonnelle>0) %}
-        <div class="d-flex align-items-center flex-wrap gap-2">
-          <div class="muted small">Matériel prêté :</div>
-          {% if has_eq %}
-            {% if eq.tireuse>0 %}<span class="chip chip-gray">Tireuse × {{ eq.tireuse }}</span>{% endif %}
-            {% if eq.co2>0 %}<span class="chip chip-gray">CO₂ × {{ eq.co2 }}</span>{% endif %}
-            {% if eq.comptoir>0 %}<span class="chip chip-gray">Comptoir × {{ eq.comptoir }}</span>{% endif %}
-            {% if eq.tonnelle>0 %}<span class="chip chip-gray">Tonnelle × {{ eq.tonnelle }}</span>{% endif %}
-          {% else %}
-            <span class="text-muted small">Aucun matériel en prêt</span>
-          {% endif %}
-        </div>
+        {{ ui.equipment_badges(c.equipment) }}
       </div>
     </div>
   {% else %}
