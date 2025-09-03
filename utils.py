@@ -6,6 +6,11 @@ from typing import Optional, Dict, List, Tuple
 from sqlalchemy import func
 from models import db, Client, Product, Variant, Movement, Inventory, ReorderRule
 
+# --- Filtrage produits à exclure (écocups, gobelets) ---
+def is_ecocup_product(product: Product) -> bool:
+    n = (product.name or '').lower()
+    return ('ecocup' in n) or ('gobelet' in n) or ('eco cup' in n) or ('eco-cup' in n)
+
 # --- Constantes partagées ---
 DEFAULT_DEPOSIT = 30.0
 MOV_TYPES = {"OUT", "IN", "DEFECT", "FULL"}  # FULL = retour plein non percuté
@@ -91,6 +96,8 @@ def compute_reorder_alerts():
     alerts = []
     rules: Dict[int, ReorderRule] = {r.variant_id: r for r in ReorderRule.query.all()}
     for v in Variant.query.all():
+        if is_ecocup_product(v.product):
+            continue
         inv = get_or_create_inventory(v.id)
         rule = rules.get(v.id)
         if rule and rule.min_qty > 0 and (inv.qty or 0) < rule.min_qty:
@@ -213,6 +220,7 @@ def get_stock_items():
     variants = (
         db.session.query(Variant)
         .join(Product, Variant.product_id == Product.id)
+        .filter(~Product.name.ilike('%ecocup%'), ~Product.name.ilike('%gobelet%'))
         .order_by(Product.name, Variant.size_l)
         .all()
     )

@@ -125,6 +125,14 @@ def create_app():
                     unit_prices = request.form.getlist("unit_price_ttc")
                     deposits = request.form.getlist("deposit_per_keg")
                     notes = request.form.get("notes") or None
+                    # Champs matériel structurés -> notes normalisées
+                    t = request.form.get('eq_tireuse', type=int)
+                    c = request.form.get('eq_co2', type=int)
+                    cp = request.form.get('eq_comptoir', type=int)
+                    tn = request.form.get('eq_tonnelle', type=int)
+                    if t is not None or c is not None or cp is not None or tn is not None:
+                        t = t or 0; c = c or 0; cp = cp or 0; tn = tn or 0
+                        notes = f'tireuse={t};co2={c};comptoir={cp};tonnelle={tn}'
 
                     # Date finale
                     if wiz.get("date"):
@@ -193,6 +201,7 @@ def create_app():
             variants = (
                 db.session.query(Variant)
                 .join(Product, Variant.product_id == Product.id)
+                .filter(~Product.name.ilike('%ecocup%'), ~Product.name.ilike('%gobelet%'))
                 .order_by(Product.name, Variant.size_l)
                 .all()
             )
