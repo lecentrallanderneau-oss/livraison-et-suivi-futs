@@ -1,7 +1,6 @@
 import os
 from datetime import datetime, date, time
 from flask import Flask, render_template, request, redirect, url_for, flash, session, Response
-
 from sqlalchemy import func
 
 from models import db, Client, Product, Variant, Movement
@@ -48,11 +47,8 @@ def create_app():
         s = "+" if v >= 0 else "−"
         return f"{s}{abs(v):,.2f} €".replace(",", " ").replace(".", ",")
 
-    # ----------------- Helpers internes -----------------
+    # ----------------- Helper: fûts ouverts chez un client -----------------
     def _open_kegs_by_variant(client_id: int):
-        """
-        Retourne un dict {variant_id: qty_chez_client} = OUT - (IN + DEFECT + FULL)
-        """
         out_rows = dict(
             db.session.query(Movement.variant_id, func.coalesce(func.sum(Movement.qty), 0))
             .filter(Movement.client_id == client_id, Movement.type == "OUT")
@@ -68,7 +64,7 @@ def create_app():
         all_vids = set(out_rows) | set(back_rows)
         return {vid: int(out_rows.get(vid, 0)) - int(back_rows.get(vid, 0)) for vid in all_vids}
 
-    # ----------------- Routes -----------------
+    # ----------------- Pages -----------------
     @app.route("/")
     def index():
         clients = Client.query.order_by(Client.name.asc()).all()
@@ -150,7 +146,7 @@ def create_app():
         )
         return render_template("catalog.html", variants=variants)
 
-    # ------------- Mouvements (Saisie) -------------
+    # ------------- Saisie (ex-mouvement pas à pas) -------------
     @app.route("/movement/new", methods=["GET"])
     def movement_new():
         return redirect(url_for("movement_wizard"))
@@ -161,7 +157,7 @@ def create_app():
             session["wiz"] = {}
         wiz = session["wiz"]
 
-        # Préselection client si query param
+        # Préselection client ?
         q_client_id = request.args.get("client_id", type=int)
         if q_client_id:
             wiz["client_id"] = q_client_id
@@ -170,16 +166,13 @@ def create_app():
         if request.method == "GET":
             step = int(request.args.get("step", 1))
             if step == 1:
-                # Autofill date du jour pour l'input
-                today_iso = date.today().isoformat()
-                return render_template("movement_wizard.html", step=1, wiz=wiz, today_iso=today_iso)
+                # Champ date vide par défaut (pas de pré-remplissage)
+                return render_template("movement_wizard.html", step=1, wiz=wiz)
             elif step == 2:
                 clients = Client.query.order_by(Client.name.asc()).all()
                 return render_template("movement_wizard.html", step=2, wiz=wiz, clients=clients)
             elif step == 3:
-                current_client = None
-                if wiz.get("client_id"):
-                    current_client = Client.query.get(wiz["client_id"])
+                current_client = Client.query.get(wiz["client_id"]) if wiz.get("client_id") else None
                 return render_template("movement_wizard.html", step=3, wiz=wiz, current_client=current_client)
             elif step == 4:
                 base_q = (
@@ -188,7 +181,7 @@ def create_app():
                     .filter(~Product.name.ilike("%ecocup%"), ~Product.name.ilike("%gobelet%"))
                     .order_by(Product.name, Variant.size_l)
                 )
-                # Si REPRISE : n’autoriser que les références encore “chez le client”
+                # Reprise : limiter aux références encore "chez le client"
                 if wiz.get("type") == "IN" and wiz.get("client_id"):
                     open_map = _open_kegs_by_variant(wiz["client_id"])
                     allowed_ids = [vid for vid, openq in open_map.items() if openq > 0]
@@ -204,19 +197,19 @@ def create_app():
         # POST
         step = int(request.form.get("step", 1))
         if step == 1:
-            mtype = request.form.get("type")  # 'OUT','IN','DEFECT','FULL'
+            mtype = request.form.get("type")
             if mtype not in U.MOV_TYPES:
                 flash("Type invalide.", "warning")
                 return redirect(url_for("movement_wizard", step=1))
             wiz["type"] = mtype
+            # si vide -> None ; on traitera plus tard
             wiz["date"] = request.form.get("date") or None
             session.modified = True
             return redirect(url_for("movement_wizard", step=2))
 
         elif step == 2:
             client_id = request.form.get("client_id", type=int)
-            c = Client.query.get(client_id)
-            if not c:
+            if not Client.query.get(client_id):
                 flash("Client introuvable.", "warning")
                 return redirect(url_for("movement_wizard", step=2))
             wiz["client_id"] = client_id
@@ -232,7 +225,7 @@ def create_app():
                 flash("Informations incomplètes.", "warning")
                 return redirect(url_for("movement_wizard", step=1))
 
-            # Date finale : si vide -> date de saisie
+            # Date finale : si vide -> date de saisie (now)
             if wiz.get("date"):
                 try:
                     y, m_, d2 = [int(x) for x in wiz["date"].split("-")]
@@ -242,14 +235,14 @@ def create_app():
             else:
                 created_at = U.now_utc()
 
-            # Champs “liste”
+            # Listes
             variant_ids = request.form.getlist("variant_id")
             qtys = request.form.getlist("qty")
             unit_prices = request.form.getlist("unit_price_ttc")
             deposits = request.form.getlist("deposit_per_keg")
             notes = request.form.get("notes") or None
 
-            # Matériel structuré (optionnel) => intégré en note
+            # Matériel structuré (en note)
             t = request.form.get("eq_tireuse", type=int)
             c2 = request.form.get("eq_co2", type=int)
             cp = request.form.get("eq_comptoir", type=int)
@@ -265,7 +258,7 @@ def create_app():
             mtype = wiz["type"]
             client_id = wiz["client_id"]
 
-            # --------- VALIDATION REPRISE ---------
+            # Reprise: solde autorisé
             open_map = _open_kegs_by_variant(client_id) if mtype == "IN" else {}
 
             created = 0
@@ -275,7 +268,6 @@ def create_app():
                 try:
                     vid_int = int(vid)
                 except Exception:
-                    # Champ vide ou choix spécial, on ignore cette ligne
                     continue
 
                 try:
@@ -300,7 +292,7 @@ def create_app():
                 if not v:
                     continue
 
-                # --------- MATÉRIEL SEUL : forcer toutes les valeurs à 0 ---------
+                # "Matériel seul" => forcer 0 partout et neutre en stock
                 pname = (v.product.name if v and v.product else "") or ""
                 is_equipment_only = "matériel" in pname.lower() and "seul" in pname.lower()
                 if is_equipment_only:
@@ -311,15 +303,14 @@ def create_app():
                     if up is None and v.price_ttc is not None:
                         up = v.price_ttc
                     if dep is None:
-                        dep = U.DEFAULT_DEPOSIT  # 30.0
+                        dep = U.DEFAULT_DEPOSIT  # 30.0 par défaut
 
-                    # Reprise: vérifier solde chez le client (seulement pour de la bière)
                     if mtype == "IN":
                         open_q = int(open_map.get(vid_int, 0))
                         if open_q <= 0 or qty_int > open_q:
                             label = f"{v.product.name} — {v.size_l} L"
                             violations.append((label, open_q))
-                            continue  # n'enregistre pas cette ligne
+                            continue
 
                 mv = Movement(
                     client_id=client_id,
@@ -333,7 +324,6 @@ def create_app():
                 )
                 db.session.add(mv)
 
-                # Effet stock seulement si qty > 0 (les lignes “matériel seul” restent neutres)
                 if qty_int > 0:
                     U.apply_inventory_effect(mtype, vid_int, qty_int)
                 created += 1
@@ -354,7 +344,7 @@ def create_app():
 
         return redirect(url_for("movement_wizard", step=1))
 
-    # ---- confirm/supp mouvement ----
+    # ---- suppression mouvement ----
     @app.route("/movement/<int:movement_id>/confirm-delete", methods=["GET"])
     def movement_confirm_delete(movement_id):
         m = Movement.query.get_or_404(movement_id)
@@ -363,7 +353,7 @@ def create_app():
     @app.route("/movement/<int:movement_id>/delete", methods=["POST"])
     def movement_delete(movement_id):
         m = Movement.query.get_or_404(movement_id)
-        U.revert_inventory_effect(m.type, m.variant_id, m.qty or 0)
+        U.apply_inventory_effect_reverse(m.type, m.variant_id, m.qty or 0)
         client_id = m.client_id
         db.session.delete(m)
         db.session.commit()
@@ -375,7 +365,6 @@ def create_app():
     def stock():
         if request.method == "POST":
             changed = 0
-            # Mises à jour qty_*, min_*
             for key, val in request.form.items():
                 if key.startswith("qty_"):
                     try:
