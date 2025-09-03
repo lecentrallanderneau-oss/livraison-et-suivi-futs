@@ -1,177 +1,121 @@
 {% extends "base.html" %}
-{% block title %}{{ client.name }}{% endblock %}
+{% block title %}{{ client.name }} · Gestion fûts{% endblock %}
 {% block content %}
-<h5 class="mb-1">{{ client.name }}</h5>
-<div class="text-muted small mb-2">
-  {% if last_delivery_at %}Dernière livraison: {{ last_delivery_at.strftime('%d/%m/%Y %H:%M') }}{% else %}Aucune livraison{% endif %}
-  &nbsp;•&nbsp;
-  {% if last_pickup_at %}Dernière reprise: {{ last_pickup_at.strftime('%d/%m/%Y %H:%M') }}{% else %}Aucune reprise{% endif %}
+<div class="d-flex align-items-center justify-content-between">
+  <h1 class="h3">{{ client.name }}</h1>
+  <a class="btn btn-primary" href="{{ url_for('movement_new', client_id=client.id) }}">Nouveau mouvement</a>
 </div>
+<hr>
 
-<div class="mb-3 d-flex flex-wrap gap-2">
-  <span class="badge bg-secondary">Fûts en cours chez eux: {{ in_place_total or 0 }}</span>
-  <span class="badge bg-secondary">Fûts livrés cumulés: {{ delivered_qty_cum or 0 }}</span>
-  <span class="badge bg-info text-dark">Bière facturée cumulée: {{ '%.0f'|format(beer_billed_cum or 0) }} €</span>
-  <span class="badge text-light" style="background:#6f42c1">Gobelets (lav+pertes): {{ '%.2f'|format(ecocup_total or 0) }} €</span>
-  <span class="badge bg-warning text-dark">Consignes en jeu: {{ '%.0f'|format(deposit_in_play or 0) }} €</span>
-</div>
-
-<div class="card p-2 mb-3">
-  <div class="fw-semibold mb-2">Matériel en cours chez ce client</div>
-  <div class="d-flex flex-wrap gap-2 small">
-    <span class="badge bg-dark-subtle text-dark">Tireuse(s): {{ equipment_totals.tireuse }}</span>
-    <span class="badge bg-dark-subtle text-dark">CO₂: {{ equipment_totals.co2 }}</span>
-    <span class="badge bg-dark-subtle text-dark">Comptoir(s): {{ equipment_totals.comptoir }}</span>
-    <span class="badge bg-dark-subtle text-dark">Tonnelle(s): {{ equipment_totals.tonnelle }}</span>
-    <span class="badge bg-dark-subtle text-dark">Ecocup: {{ equipment_totals.ecocup }}</span>
-  </div>
-</div>
-
-<div class="d-flex gap-2 mb-3">
-  <a class="btn btn-outline-primary" href="{{ url_for('movement_new', client_id=client.id) }}">+ Livraison / Reprise ici</a>
-  <a class="btn btn-outline-secondary" href="{{ url_for('clients') }}">Changer de client</a>
-</div>
-
-<ul class="nav nav-pills mb-3" id="pills-tab" role="tablist">
-  <li class="nav-item" role="presentation">
-    <button class="nav-link active" id="pills-kegs-tab" data-bs-toggle="pill" data-bs-target="#pills-kegs" type="button" role="tab">Fûts</button>
-  </li>
-  <li class="nav-item" role="presentation">
-    <button class="nav-link" id="pills-cups-tab" data-bs-toggle="pill" data-bs-target="#pills-cups" type="button" role="tab">Gobelets</button>
-  </li>
-</ul>
-
-<div class="tab-content" id="pills-tabContent">
-  <!-- Onglet Fûts -->
-  <div class="tab-pane fade show active" id="pills-kegs" role="tabpanel">
-    <h6 class="mb-2">Stock actuel (par produit)</h6>
-    <div class="table-responsive">
-      <table class="table table-sm align-middle bg-white">
-        <thead><tr><th>Produit</th><th>Format</th><th class="text-end">Chez eux</th></tr></thead>
-        <tbody>
-        {% for r in rows %}
-          {% set in_place = (r.out_qty - r.in_qty) %}
-          {% if in_place != 0 %}
-          <tr>
-            <td>{{ r.product_name }}</td>
-            <td>{{ r.size_l }} L</td>
-            <td class="text-end"><span class="badge bg-secondary">{{ in_place }}</span></td>
-          </tr>
-          {% endif %}
-        {% else %}
-          <tr><td colspan="3" class="text-center text-muted">Aucun stock de fûts en cours</td></tr>
-        {% endfor %}
-        </tbody>
-      </table>
+<div class="row g-3">
+  <div class="col-md-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="mb-2"><span class="muted">Bière facturée cumulée</span><div class="card-number">{{ '%.2f'|format(beer_billed_cum or 0) }} €</div></div>
+        <div class="mb-2"><span class="muted">Consigne en cours</span><div class="card-number">{{ '%.2f'|format(deposit_in_play or 0) }} €</div></div>
+        <div class="mb-2"><span class="muted">Litres livrés cumulés</span><div class="card-number">{{ delivered_qty_cum or 0 }} L</div></div>
+        <div class="mb-2"><span class="muted">Volume actuellement en place</span><div class="card-number">{{ in_place_total or 0 }} L</div></div>
+        <hr>
+        <div class="mb-1"><span class="muted">Dernière livraison</span><div>{{ last_delivery_at or '—' }}</div></div>
+        <div class="mb-1"><span class="muted">Dernier retrait</span><div>{{ last_pickup_at or '—' }}</div></div>
+        <hr>
+        <div class="mb-1"><span class="muted">Matériel en prêt</span></div>
+        <ul class="list-unstyled mb-0">
+          <li>Tireuse : <strong>{{ equipment_totals.tireuse or 0 }}</strong></li>
+          <li>CO₂ : <strong>{{ equipment_totals.co2 or 0 }}</strong></li>
+          <li>Comptoir : <strong>{{ equipment_totals.comptoir or 0 }}</strong></li>
+          <li>Tonnelle : <strong>{{ equipment_totals.tonnelle or 0 }}</strong></li>
+        </ul>
+      </div>
     </div>
   </div>
 
-  <!-- Onglet Gobelets -->
-  <div class="tab-pane fade" id="pills-cups" role="tabpanel">
-    <h6 class="mb-2">Gobelets Ecocup</h6>
-    <div class="mb-2">
-      <span class="badge bg-secondary">En cours chez ce client: {{ equipment_totals.ecocup or 0 }}</span>
-      <span class="badge text-light" style="background:#6f42c1">Total (lav+pertes): {{ '%.2f'|format(ecocup_total or 0) }} €</span>
-    </div>
-
-    <div class="table-responsive">
-      <table class="table table-sm bg-white align-middle">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Type</th>
-            <th class="text-end">Qté Ecocup</th>
-            <th>Notes</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for e in ecocup_events %}
+  <div class="col-md-9">
+    <div class="card mb-3">
+      <div class="card-header">Stock par variantes</div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0 align-middle">
+          <thead>
             <tr>
-              <td>{{ e.date.strftime('%d/%m/%Y %H:%M') }}</td>
-              <td>
-                {% if e.type == 'OUT' %}<span class="badge bg-primary">Prêt</span>
-                {% elif e.type == 'IN' %}<span class="badge bg-success">Retour</span>
-                {% elif e.type == 'DEFECT' %}<span class="badge bg-danger">Retour (défectueux)</span>
-                {% endif %}
-              </td>
-              <td class="text-end">{{ e.qty }}</td>
-              <td>{{ e.note or '' }}</td>
+              <th>Produit</th>
+              <th>Contenance</th>
+              <th class="text-end">Sorties</th>
+              <th class="text-end">Entrées/Defect</th>
+              <th class="text-end">En place (est.)</th>
+              <th class="text-end">Prix cat. (€)</th>
             </tr>
-          {% else %}
-            <tr><td colspan="4" class="text-center text-muted">Aucun mouvement d’écocups</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+              {% set en_place = (r.out_qty or 0) - (r.in_qty or 0) %}
+              <tr>
+                <td>{{ r.product_name }}</td>
+                <td>{{ r.size_l }} L</td>
+                <td class="text-end">{{ r.out_qty or 0 }}</td>
+                <td class="text-end">{{ r.in_qty or 0 }}</td>
+                <td class="text-end">{{ en_place }}</td>
+                <td class="text-end">{{ '%.2f'|format(r.catalog_price or 0) }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="6" class="text-center text-muted">Aucune donnée.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
-  </div>
-</div>
 
-<h6 class="mt-4 mb-2">Historique des mouvements (tous)</h6>
-<div class="table-responsive">
-<table class="table table-sm bg-white align-middle">
-  <thead>
-    <tr>
-      <th>Date</th>
-      <th>Type</th>
-      <th>Produit</th>
-      <th class="text-end">Qté</th>
-      <th class="text-end">Prix unitaire bière (€)</th>
-      <th class="text-end">Total bière (€)</th>
-      <th class="text-end">Consigne / fût (€)</th>
-      <th class="text-end">Total consigne (€)</th>
-      <th>Matériel</th>
-      <th>Notes</th>
-      <th class="text-end">Actions</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for m, eq, human in movements %}
-      {% set safe_unit = (m.unit_price_ttc or 0) %}
-      {% set safe_deposit = (m.deposit_per_keg or 0) %}
-      {% set beer_total = (m.qty * safe_unit) if m.type == 'OUT' else (-(m.qty * safe_unit)) if m.type == 'DEFECT' else 0 %}
-      {% set deposit_total = (m.qty * safe_deposit) if m.type == 'OUT' else (-(m.qty * safe_deposit)) %}
-      <tr>
-        <td>{{ m.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
-        <td>
-          {% if m.type == 'OUT' %}
-            <span class="badge bg-primary">Livraison</span>
-          {% elif m.type == 'IN' %}
-            <span class="badge bg-success">Reprise</span>
-          {% elif m.type == 'DEFECT' %}
-            <span class="badge bg-danger">Reprise défectueux</span>
-          {% endif %}
-        </td>
-        <td>
-          {% if m.variant and m.variant.product %}
-            {{ m.variant.product.name }} — {{ m.variant.size_l }} L
-          {% else %}
-            <em class="text-muted">[référence supprimée]</em>
-          {% endif %}
-        </td>
-        <td class="text-end">{{ m.qty }}</td>
-        <td class="text-end">{{ safe_unit|float|round(2) }}</td>
-        <td class="text-end">{{ beer_total|float|round(2) }}</td>
-        <td class="text-end">{{ safe_deposit|float|round(2) }}</td>
-        <td class="text-end">{{ deposit_total|float|round(2) }}</td>
-        <td class="small">
-          {% set any = (eq.tireuse or eq.co2 or eq.comptoir or eq.tonnelle or eq.ecocup) %}
-          {% if any %}
-            {% if eq.tireuse %}Tireuse: {{ eq.tireuse }}{% endif %}
-            {% if eq.co2 %}{% if eq.tireuse %} • {% endif %}CO₂: {{ eq.co2 }}{% endif %}
-            {% if eq.comptoir %}{% if eq.tireuse or eq.co2 %} • {% endif %}Comptoir: {{ eq.comptoir }}{% endif %}
-            {% if eq.tonnelle %}{% if eq.tireuse or eq.co2 or eq.comptoir %} • {% endif %}Tonnelle: {{ eq.tonnelle }}{% endif %}
-            {% if eq.ecocup %}{% if eq.tireuse or eq.co2 or eq.comptoir or eq.tonnelle %} • {% endif %}Ecocup: {{ eq.ecocup }}{% endif %}
-          {% else %}—{% endif %}
-        </td>
-        <td>{{ human or '' }}</td>
-        <td class="text-end">
-          <a class="btn btn-sm btn-outline-danger" href="{{ url_for('movement_confirm_delete', movement_id=m.id) }}">Supprimer…</a>
-        </td>
-      </tr>
-    {% else %}
-      <tr><td colspan="11" class="text-center text-muted">Aucun mouvement enregistré</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+    <div class="card">
+      <div class="card-header">Historique des mouvements</div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0 align-middle">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Type</th>
+              <th>Produit</th>
+              <th class="text-end">Taille</th>
+              <th class="text-end">Qté</th>
+              <th class="text-end">Prix unitaire</th>
+              <th class="text-end">Consigne/ fût</th>
+              <th>Matériel</th>
+              <th>Note</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for m in movements %}
+              <tr>
+                <td class="text-nowrap">{{ m.when.strftime('%Y-%m-%d %H:%M') if m.when else '—' }}</td>
+                <td>{{ m.type }}</td>
+                <td>{{ m.product }}</td>
+                <td class="text-end">{{ m.size_l }} L</td>
+                <td class="text-end">{{ m.qty }}</td>
+                <td class="text-end">{{ m.unit_price is not none and ('%.2f'|format(m.unit_price)) or '—' }}</td>
+                <td class="text-end">{{ m.deposit_per_keg and ('%.2f'|format(m.deposit_per_keg)) or '—' }}</td>
+                <td>
+                  {% set e = m.equipment %}
+                  {% if e.tireuse or e.co2 or e.comptoir or e.tonnelle %}
+                    <small class="muted">
+                      {% if e.tireuse %} tireuse={{ e.tireuse }}{% endif %}
+                      {% if e.co2 %} co2={{ e.co2 }}{% endif %}
+                      {% if e.comptoir %} comptoir={{ e.comptoir }}{% endif %}
+                      {% if e.tonnelle %} tonnelle={{ e.tonnelle }}{% endif %}
+                    </small>
+                  {% else %}—{% endif %}
+                </td>
+                <td>{{ m['note'] or '' }}</td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-danger" href="{{ url_for('movement_confirm_delete', movement_id=m.id) }}">Supprimer</a>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="10" class="text-center text-muted">Aucun mouvement.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
 </div>
 {% endblock %}
