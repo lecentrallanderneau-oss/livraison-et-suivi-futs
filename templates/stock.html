@@ -4,7 +4,7 @@
 {% block content %}
 <div class="d-flex align-items-center justify-content-between">
   <h1 class="h3 mb-0">Stock bar (fûts pleins)</h1>
-  <a href="{{ url_for('movement_wizard') }}" class="btn btn-outline-primary">+ Mouvement</a>
+  <a href="{{ url_for('movement_wizard') }}" class="btn btn-outline-primary">+ Saisie</a>
 </div>
 <hr>
 
@@ -16,20 +16,24 @@
       <thead>
         <tr>
           <th>Produit</th>
-          <th>Contenance (L)</th>
-          <th class="text-end">Stock (fûts)</th>
-          <th class="text-end">Mini</th>
+          <th class="text-center" style="width:100px;">Taille</th>
+          <th class="text-end" style="width:140px;">Prix TTC</th>
+          <th class="text-end" style="width:140px;">Stock (fûts)</th>
+          <th class="text-end" style="width:140px;">Seuil mini</th>
         </tr>
       </thead>
       <tbody>
-        {% for it in items %}
+        {% for it in rows %}
           <tr>
             <td>{{ it.variant.product.name }}</td>
-            <td>{{ it.variant.size_l }}</td>
-            <td class="text-end" style="max-width:120px;">
-              <input type="number" class="form-control form-control-sm text-end" name="qty_{{ it.variant.id }}" value="{{ it.inventory.qty }}" min="0" step="1">
+            <td class="text-center">{{ it.variant.size_l }} L</td>
+            <td class="text-end">{{ it.variant.price_ttc is not none and ('%.2f'|format(it.variant.price_ttc)) ~ ' €' or '—' }}</td>
+            <td>
+              <input type="number" name="qty_{{ it.variant.id }}" class="form-control text-end" min="0" step="1" value="{{ it.inventory.qty or 0 }}">
             </td>
-            <td class="text-end">{{ it.rule and it.rule.min_qty or '—' }}</td>
+            <td>
+              <input type="number" name="min_{{ it.variant.id }}" class="form-control text-end" min="0" step="1" value="{{ it.rule and it.rule.min_qty or 0 }}">
+            </td>
           </tr>
         {% endfor %}
       </tbody>
