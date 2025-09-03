@@ -3,13 +3,13 @@
 {% block content %}
 <div class="d-flex align-items-center justify-content-between">
   <h1 class="h3 mb-0">{{ client.name }}</h1>
-  <a class="btn btn-primary" href="{{ url_for('movement_new', client_id=client.id) }}">Nouveau mouvement</a>
+  <a class="btn btn-primary" href="{{ url_for('movement_wizard', client_id=client.id) }}">Nouveau mouvement</a>
 </div>
 <hr>
 
 <div class="row g-3">
   <!-- Colonne récap -->
-  <div class="col-md-3">
+  <div class="col-md-4">
     <div class="card mb-3">
       <div class="card-header">Récapitulatif</div>
       <div class="card-body">
@@ -27,56 +27,14 @@
         </div>
       </div>
     </div>
-
-    {% if equipment_totals is defined %}
-    <div class="card">
-      <div class="card-header">Matériel prêté (totaux)</div>
-      <div class="card-body">
-        <ul class="list-unstyled mb-0">
-          <li>Tireuse : <strong>{{ equipment_totals.tireuse or 0 }}</strong></li>
-          <li>CO₂ : <strong>{{ equipment_totals.co2 or 0 }}</strong></li>
-          <li>Comptoir : <strong>{{ equipment_totals.comptoir or 0 }}</strong></li>
-          <li>Tonnelle : <strong>{{ equipment_totals.tonnelle or 0 }}</strong></li>
-        </ul>
-      </div>
-    </div>
-    {% endif %}
   </div>
 
   <!-- Colonne principale -->
-  <div class="col-md-9">
-    <div class="card mb-3">
-      <div class="card-header">Stock par variantes</div>
-      <div class="card-body p-0">
-        <table class="table table-sm mb-0 align-middle">
-          <thead>
-            <tr>
-              <th>Produit</th>
-              <th>Contenance (L)</th>
-              <th class="text-end">Stock (fûts)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% if stock_rows is defined and stock_rows %}
-              {% for r in stock_rows %}
-                <tr>
-                  <td>{{ r.product }}</td>
-                  <td>{{ r.size_l }}</td>
-                  <td class="text-end">{{ r.stock }}</td>
-                </tr>
-              {% endfor %}
-            {% else %}
-              <tr><td colspan="3" class="text-center text-muted">Aucune donnée de stock.</td></tr>
-            {% endif %}
-          </tbody>
-        </table>
-      </div>
-    </div>
-
+  <div class="col-md-8">
     <div class="card">
       <div class="card-header d-flex align-items-center justify-content-between">
         <span>Historique des mouvements</span>
-        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('movement_new', client_id=client.id) }}">+ Nouveau</a>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('movement_wizard', client_id=client.id) }}">+ Nouveau</a>
       </div>
       <div class="card-body p-0">
         <table class="table table-sm mb-0 align-middle">
@@ -89,7 +47,7 @@
               <th class="text-end">Qté</th>
               <th class="text-end">PU TTC (€)</th>
               <th class="text-end">Cons./fût (€)</th>
-              <th>Note / Matériel</th>
+              <th>Note</th>
               <th class="text-end">Action</th>
             </tr>
           </thead>
@@ -102,7 +60,7 @@
                 <td class="text-end">{{ m.variant.size_l }}</td>
                 <td class="text-end">{{ m.qty }}</td>
                 <td class="text-end">{{ m.unit_price_ttc is not none and ('%.2f'|format(m.unit_price_ttc)) or '—' }}</td>
-                <td class="text-end">{{ m.deposit_per_keg and ('%.2f'|format(m.deposit_per_keg)) or '—' }}</td>
+                <td class="text-end">{{ m.deposit_per_keg is not none and ('%.2f'|format(m.deposit_per_keg)) or '—' }}</td>
                 <td>{{ m.notes or '—' }}</td>
                 <td class="text-end">
                   <a class="btn btn-sm btn-outline-danger" href="{{ url_for('movement_confirm_delete', movement_id=m.id) }}">Supprimer</a>
