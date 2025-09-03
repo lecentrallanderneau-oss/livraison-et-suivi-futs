@@ -1,6 +1,6 @@
 import os
 from datetime import datetime, date, time
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask import Flask, render_template, request, redirect, url_for, flash, session, Response
 
 from models import db, Client, Product, Variant, Movement
 from seed import seed_if_empty
@@ -17,6 +17,11 @@ def create_app():
     with app.app_context():
         db.create_all()
         seed_if_empty()
+
+    # ----------------- Healthcheck ultra léger -----------------
+    @app.route("/healthz", methods=["GET", "HEAD"])
+    def healthz():
+        return Response("ok", status=200, mimetype="text/plain")
 
     # ----------------- Filtres Jinja -----------------
     @app.template_filter("dt")
@@ -96,17 +101,14 @@ def create_app():
     @app.route("/client/<int:client_id>")
     def client_detail(client_id):
         c = Client.query.get_or_404(client_id)
-        # Vue calculée (euros bière + consigne, matériel net)
         view = U.summarize_client_detail(c)
 
-        # Mouvement list (objets ORM attendus par le template)
         movements = (
             Movement.query.filter_by(client_id=client_id)
             .order_by(Movement.created_at.desc(), Movement.id.desc())
             .all()
         )
 
-        # Variables attendues par client_detail.html
         beer_billed_cum = view["beer_eur"]
         deposit_in_play = view["deposit_eur"]
         equipment_totals = view["equipment"]
@@ -122,7 +124,6 @@ def create_app():
 
     @app.route("/catalog")
     def catalog():
-        # Exclure écocup/gobelet
         variants = (
             db.session.query(Variant)
             .join(Product, Variant.product_id == Product.id)
@@ -135,7 +136,6 @@ def create_app():
     # ------------- Mouvements -------------
     @app.route("/movement/new", methods=["GET"])
     def movement_new():
-        # Redirection vers l’assistant (pas-à-pas)
         return redirect(url_for("movement_wizard"))
 
     @app.route("/movement/wizard", methods=["GET", "POST"])
@@ -144,7 +144,6 @@ def create_app():
             session["wiz"] = {}
         wiz = session["wiz"]
 
-        # Pré-sélection client si fourni en query string
         q_client_id = request.args.get("client_id", type=int)
         if q_client_id:
             wiz["client_id"] = q_client_id
@@ -201,7 +200,6 @@ def create_app():
                 flash("Informations incomplètes.", "warning")
                 return redirect(url_for("movement_wizard", step=1))
 
-            # Date finale
             if wiz.get("date"):
                 try:
                     y, m_, d2 = [int(x) for x in wiz["date"].split("-")]
@@ -211,7 +209,6 @@ def create_app():
             else:
                 created_at = U.now_utc()
 
-            # Champs “liste” (templates actuelles envoient des listes)
             variant_ids = request.form.getlist("variant_id")
             qtys = request.form.getlist("qty")
             unit_prices = request.form.getlist("unit_price_ttc")
