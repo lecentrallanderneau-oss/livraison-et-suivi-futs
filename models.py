@@ -1,4 +1,4 @@
-# models.py — mêmes schémas, docstrings + annotations
+# models.py — mêmes schémas, + champ email sur Client
 from __future__ import annotations
 from typing import Optional
 from datetime import datetime
@@ -15,6 +15,7 @@ class Client(db.Model):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # <— nouveau, optionnel
 
     movements = relationship("Movement", backref="client", lazy=True, cascade="all, delete-orphan")
 
@@ -67,25 +68,22 @@ class Movement(db.Model):
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), nullable=False, index=True)
     variant_id: Mapped[int] = mapped_column(ForeignKey("variants.id"), nullable=False, index=True)
 
-    qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
+    qty: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # pour “Matériel seul”: 0/None
     unit_price_ttc: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     deposit_per_keg: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     def __repr__(self) -> str:
-        return f"<Movement {self.id} {self.type} c={self.client_id} v={self.variant_id} qty={self.qty}>"
+        return f"<Movement {self.id} {self.type} c={self.client_id} v={self.variant_id} q={self.qty}>"
 
 
 class Inventory(db.Model):
-    """Stock bar (fûts pleins) par variante."""
-    __tablename__ = "inventory"
+    """Stock par variante (quantité de fûts pleins au dépôt)."""
+    __tablename__ = "inventories"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     variant_id: Mapped[int] = mapped_column(ForeignKey("variants.id"), nullable=False, unique=True, index=True)
     qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     def __repr__(self) -> str:
         return f"<Inventory v={self.variant_id} qty={self.qty}>"
