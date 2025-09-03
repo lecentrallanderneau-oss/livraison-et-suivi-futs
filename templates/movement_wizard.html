@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Assistant mouvement{% endblock %}
+{% block content %}
+<h1 class="h3">Assistant mouvement</h1>
+<hr>
+
+{% if step == 1 %}
+<form method="post" class="card p-3">
+  <div class="mb-3">
+    <label class="form-label">Choisir le type</label>
+    <div class="form-check">
+      <input class="form-check-input" type="radio" name="type" id="t1" value="OUT" {{ wiz.type=='OUT' and 'checked' or '' }}>
+      <label class="form-check-label" for="t1">Livraison (OUT)</label>
+    </div>
+    <div class="form-check">
+      <input class="form-check-input" type="radio" name="type" id="t2" value="IN" {{ wiz.type=='IN' and 'checked' or '' }}>
+      <label class="form-check-label" for="t2">Reprise (IN)</label>
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <button name="action" value="next" class="btn btn-primary">Suivant</button>
+  </div>
+</form>
+
+{% elif step == 2 %}
+<form method="post" class="card p-3">
+  <div class="mb-3">
+    <label class="form-label">Client</label>
+    <select name="client_id" class="form-select" required>
+      {% for c in clients %}
+        <option value="{{ c.id }}" {{ wiz.client_id and wiz.client_id==c.id and 'selected' or '' }}>{{ c.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="d-flex gap-2">
+    <button name="action" value="prev" class="btn btn-outline-secondary">Précédent</button>
+    <button name="action" value="next" class="btn btn-primary">Suivant</button>
+  </div>
+</form>
+
+{% elif step == 3 %}
+<form method="post" class="card p-3">
+  <div class="mb-3">
+    <label class="form-label">Date</label>
+    <input type="date" name="date" class="form-control" value="{{ wiz.date or '' }}" required>
+    <div class="form-text">Heure non nécessaire.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <button name="action" value="prev" class="btn btn-outline-secondary">Précédent</button>
+    <button name="action" value="next" class="btn btn-primary">Suivant</button>
+  </div>
+</form>
+
+{% elif step == 4 %}
+<form method="post" class="card p-3">
+  <div class="mb-3">
+    <label class="form-label">Produits</label>
+    <div id="lines" class="d-flex flex-column gap-2">
+      <div class="line d-flex gap-2">
+        <select name="variant_id" class="form-select" required>
+          {% for v in variants %}
+            <option value="{{ v.id }}">{{ v.product.name }} — {{ v.size_l }} L</option>
+          {% endfor %}
+        </select>
+        <input type="number" name="qty" class="form-control" min="1" step="1" placeholder="Qté" required>
+        <input type="number" name="unit_price_ttc" class="form-control" step="0.01" min="0" placeholder="PU TTC (opt)">
+        <input type="number" name="deposit_per_keg" class="form-control" step="0.01" min="0" placeholder="Consigne/fût (opt)">
+      </div>
+    </div>
+    <div class="mt-2">
+      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addLine()">+ Ajouter une ligne</button>
+    </div>
+  </div>
+
+  <div class="mb-3">
+    <label class="form-label">Note / Matériel (optionnel)</label>
+    <textarea name="notes" class="form-control" rows="2" placeholder="Ex : tireuse=1;co2=0;comptoir=0;tonnelle=0"></textarea>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button name="action" value="prev" class="btn btn-outline-secondary">Précédent</button>
+    <button name="action" value="next" class="btn btn-primary">Enregistrer</button>
+  </div>
+</form>
+
+<script>
+function addLine(){
+  const tpl = document.querySelector('.line').cloneNode(true);
+  tpl.querySelectorAll('input').forEach(i=>i.value='');
+  document.getElementById('lines').appendChild(tpl);
+}
+</script>
+{% endif %}
+
+{% endblock %}
