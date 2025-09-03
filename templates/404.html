@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}404 · Gestion fûts{% endblock %}
+{% block content %}
+<div class="text-center py-5">
+  <h1 class="display-6">404</h1>
+  <p class="text-muted">Page introuvable.</p>
+  <a class="btn btn-primary" href="{{ url_for('index') }}">Retour à l’accueil</a>
+</div>
+{% endblock %}

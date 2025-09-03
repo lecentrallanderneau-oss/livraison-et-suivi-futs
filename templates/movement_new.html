@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Nouveau mouvement · Gestion fûts{% endblock %}
+{% block content %}
+<h1 class="h3">Nouveau mouvement</h1>
+<hr>
+
+<form method="post" action="{{ url_for('movement_new') }}" class="row g-3">
+  <!-- Client -->
+  <div class="col-md-4">
+    <label class="form-label">Client</label>
+    <select name="client_id" class="form-select" required>
+      {% if current_client %}
+        <option value="{{ current_client.id }}">{{ current_client.name }}</option>
+      {% endif %}
+      {% for c in clients %}
+        {% if not current_client or c.id != current_client.id %}
+          <option value="{{ c.id }}">{{ c.name }}</option>
+        {% endif %}
+      {% endfor %}
+    </select>
+  </div>
+
+  <!-- Type -->
+  <div class="col-md-3">
+    <label class="form-label">Type</label>
+    <select name="type" class="form-select" required>
+      <option value="OUT">Sortie (livraison)</option>
+      <option value="IN">Reprise</option>
+      <option value="DEFECT">Défectueux</option>
+    </select>
+  </div>
+
+  <!-- Date/heure -->
+  <div class="col-md-5">
+    <label class="form-label">Date &amp; heure</label>
+    <input type="datetime-local" name="created_at" class="form-control" required>
+  </div>
+
+  <!-- Variante -->
+  <div class="col-md-8">
+    <label class="form-label">Produit / Variante</label>
+    <select name="variant_id" class="form-select" required>
+      {% for v in variants %}
+        <option value="{{ v.id }}">
+          {{ v.product.name }} — {{ v.size_l }} L{% if v.price_ttc is not none %} ({{ '%.2f'|format(v.price_ttc) }} € TTC){% endif %}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <!-- Quantité -->
+  <div class="col-md-4">
+    <label class="form-label">Quantité (fûts)</label>
+    <input type="number" name="qty" class="form-control" min="1" step="1" value="1" required>
+  </div>
+
+  <!-- Prix unitaire TTC -->
+  <div class="col-md-4">
+    <label class="form-label">Prix unitaire TTC (€) <span class="text-muted">(optionnel)</span></label>
+    <input type="number" name="unit_price_ttc" class="form-control" step="0.01" min="0">
+  </div>
+
+  <!-- Consigne / fût -->
+  <div class="col-md-4">
+    <label class="form-label">Consigne par fût (€) <span class="text-muted">(optionnel)</span></label>
+    <input type="number" name="deposit_per_keg" class="form-control" step="0.01" min="0">
+  </div>
+
+  <!-- Note / Matériel -->
+  <div class="col-12">
+    <label class="form-label">Note / Matériel</label>
+    <textarea name="notes" class="form-control" rows="3" placeholder="Ex : tireuse=1;co2=0;comptoir=0;tonnelle=0"></textarea>
+  </div>
+
+  <div class="col-12 d-flex gap-2">
+    <button type="submit" class="btn btn-primary">Enregistrer</button>
+    {% if current_client %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('client_detail', client_id=current_client.id) }}">Annuler</a>
+    {% else %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('index') }}">Annuler</a>
+    {% endif %}
+  </div>
+</form>
+
+<script>
+  // valeur par défaut du datetime-local : maintenant (en local)
+  (function(){
+    const input = document.querySelector('input[name="created_at"]');
+    if (input && !input.value) {
+      const now = new Date();
+      now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+      input.value = now.toISOString().slice(0,16);
+    }
+  })();
+</script>
+{% endblock %}
