@@ -199,6 +199,9 @@ def create_app():
             .all()
         )
 
+        # Matériel prêté net (sur la fiche client aussi)
+        equipment_totals = {'tireuse': 0, 'co2': 0, 'comptoir': 0, 'tonnelle': 0}
+
         movements_view = []
         for m, v, p in moves:
             eff_price = _price_for_movement(m, v) or 0.0
@@ -207,10 +210,17 @@ def create_app():
             if m.type == 'OUT':
                 beer_billed_cum += (m.qty or 0) * eff_price
                 deposit_in_play += (m.qty or 0) * dep
-            elif m.type in ('IN', 'DEFECT', 'FULL'):
+                sign = 1
+            else:
                 deposit_in_play -= (m.qty or 0) * dep
+                sign = -1
                 if m.type in ('DEFECT', 'FULL'):
                     beer_billed_cum -= (m.qty or 0) * eff_price  # remboursement
+
+            # Accumulation équipement
+            eq = parse_equipment(m.notes)
+            for k in equipment_totals.keys():
+                equipment_totals[k] += sign * int(eq.get(k, 0))
 
             movements_view.append(type('MV', (), dict(
                 id=m.id,
@@ -231,6 +241,7 @@ def create_app():
             delivered_qty_cum=delivered_qty_cum or 0,
             beer_billed_cum=beer_billed_cum or 0.0,
             deposit_in_play=deposit_in_play or 0.0,
+            equipment_totals=type('EQ', (), equipment_totals)
         )
 
     # ---- Ancienne page -> redirige vers l'assistant pas-à-pas
@@ -373,148 +384,4 @@ def create_app():
 
     @app.route('/movement/<int:movement_id>/delete', methods=['POST'])
     def movement_delete(movement_id):
-        m = Movement.query.get_or_404(movement_id)
-        cid = m.client_id
-        # Reverser l'impact stock si c'était OUT / FULL
-        if m.type == 'OUT':
-            inv = get_or_create_inventory(m.variant_id)
-            inv.qty = (inv.qty or 0) + (m.qty or 0)
-        elif m.type == 'FULL':
-            inv = get_or_create_inventory(m.variant_id)
-            inv.qty = (inv.qty or 0) - (m.qty or 0)
-        db.session.delete(m)
-        db.session.commit()
-        flash("Mouvement supprimé.", "success")
-        return redirect(url_for('client_detail', client_id=cid))
-
-    # ---- Stock bar (inventaire) ----
-    @app.route('/stock', methods=['GET', 'POST'])
-    def stock():
-        if request.method == 'POST':
-            # Mise à jour inventaire
-            for v in Variant.query.all():
-                val = request.form.get(f'qty_{v.id}')
-                if val is None:
-                    continue
-                try:
-                    qty = int(val)
-                except Exception:
-                    continue
-                inv = get_or_create_inventory(v.id)
-                inv.qty = qty
-            db.session.commit()
-            flash("Inventaire mis à jour.", "success")
-            return redirect(url_for('stock'))
-
-        variants = (
-            db.session.query(Variant)
-            .join(Product, Variant.product_id == Product.id)
-            .order_by(Product.name, Variant.size_l)
-            .all()
-        )
-        items = []
-        rules = {r.variant_id: r for r in ReorderRule.query.all()}
-        for v in variants:
-            inv = get_or_create_inventory(v.id)
-            rule = rules.get(v.id)
-            items.append(dict(variant=v, inventory=inv, rule=rule))
-        alerts = compute_reorder_alerts()
-        return render_template('stock.html', items=items, alerts=alerts)
-
-    # ---- Catalogue (gardé pour compat, lien retiré dans navbar) ----
-    @app.route('/catalog')
-    def catalog():
-        rows = (
-            db.session.query(Product.name, Variant.size_l, Variant.price_ttc)
-            .join(Variant, Variant.product_id == Product.id)
-            .order_by(Product.name, Variant.size_l)
-            .all()
-        )
-        return render_template('catalog.html', rows=rows)
-
-    @app.route('/products')
-    def products():
-        rows = (
-            db.session.query(Product.name, Variant.size_l, Variant.price_ttc)
-            .join(Variant, Variant.product_id == Product.id)
-            .order_by(Product.name, Variant.size_l)
-            .all()
-        )
-        return render_template('product.html', rows=rows)
-
-    @app.errorhandler(404)
-    def _404(_e):
-        return render_template('404.html'), 404
-
-    @app.errorhandler(500)
-    def _500(_e):
-        return render_template('500.html'), 500
-
-    return app
-
-
-# ------------------ Seeding ------------------
-DEFAULT_CLIENTS = [
-    "Landerneau Football Club",
-    "Maison Michel",
-    "Ploudiry / Sizun Handball",
-]
-
-DEFAULT_CATALOG = [
-    ("Coreff Blonde", [20, 30]),
-    ("Coreff Blonde Bio", [20]),
-    ("Coreff Rousse", [20]),
-    ("Coreff Ambrée", [22]),
-]
-
-REORDER_DEFAULTS = [
-    ("Coreff Blonde", 30, 5),
-    ("Coreff Blonde", 20, 2),
-]
-
-def seed_if_empty():
-    # Clients
-    if db.session.query(Client).count() == 0:
-        for name in DEFAULT_CLIENTS:
-            db.session.add(Client(name=name))
-        db.session.commit()
-
-    # Products + Variants
-    if db.session.query(Product).count() == 0:
-        for pname, sizes in DEFAULT_CATALOG:
-            p = Product(name=pname)
-            db.session.add(p)
-            db.session.flush()
-            for size in sizes:
-                v = Variant(product_id=p.id, size_l=size, price_ttc=None)
-                db.session.add(v)
-        db.session.commit()
-
-    # Inventory rows
-    for v in Variant.query.all():
-        if not Inventory.query.filter_by(variant_id=v.id).first():
-            db.session.add(Inventory(variant_id=v.id, qty=0))
-    db.session.commit()
-
-    # Reorder rules
-    for pname, size, minq in REORDER_DEFAULTS:
-        v = (
-            db.session.query(Variant)
-            .join(Product, Variant.product_id == Product.id)
-            .filter(Product.name == pname, Variant.size_l == size)
-            .first()
-        )
-        if v:
-            rule = ReorderRule.query.filter_by(variant_id=v.id).first()
-            if not rule:
-                db.session.add(ReorderRule(variant_id=v.id, min_qty=minq))
-            else:
-                rule.min_qty = minq
-    db.session.commit()
-
-
-# ------------------ Entrée ------------------
-app = create_app()
-
-if __name__ == "__main__":
-    app.run(debug=True)
+        m = Movement.query.get_o_
