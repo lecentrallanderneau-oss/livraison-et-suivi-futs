@@ -12,7 +12,7 @@ DEFAULT_DEPOSIT = 30.0
 MOV_TYPES = {"OUT", "IN", "DEFECT", "FULL"}  # FULL = retour plein
 
 
-# --- Structures utilitaires (adaptées aux templates) ---
+# --- Structures utilitaires ---
 @dataclass
 class Equipment:
     tireuse: int = 0
@@ -23,18 +23,16 @@ class Equipment:
 
 @dataclass
 class Card:
-    id: int           # attendu par index.html : c.id
-    name: str         # attendu par index.html : c.name
+    id: int
+    name: str
     kegs: int
     beer_eur: float
     deposit_eur: float
     equipment: Equipment
-    # Les dates peuvent manquer, le template gère via 'if'
     last_out: Optional[object] = None
     last_in: Optional[object] = None
 
 
-# --- Utilitaires temps ---
 def now_utc():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc)
@@ -144,7 +142,6 @@ def get_stock_items():
 
 
 def compute_reorder_alerts():
-    """Retourne une liste d'objets avec .product, .variant, .qty, .min_qty, .need pour _macros.alerts_list."""
     alerts = []
     for row in get_stock_items():
         v = row["variant"]
@@ -161,7 +158,31 @@ def compute_reorder_alerts():
     return alerts
 
 
-# --- Accueil ---
+# --- Solde de fûts chez le client, par variante ---
+def get_open_kegs_by_variant(client_id: int) -> Dict[int, int]:
+    """
+    Retourne un dict {variant_id: kegs_chez_client}
+    kegs_chez_client = OUT - (IN + DEFECT + FULL)
+    """
+    rows = (
+        db.session.query(Movement.variant_id, Movement.type, func.coalesce(func.sum(Movement.qty), 0))
+        .filter(Movement.client_id == client_id)
+        .group_by(Movement.variant_id, Movement.type)
+        .all()
+    )
+    acc: Dict[int, Dict[str, int]] = {}
+    for vid, mtype, s in rows:
+        acc.setdefault(vid, {"OUT": 0, "IN": 0, "DEFECT": 0, "FULL": 0})
+        acc[vid][mtype] = int(s or 0)
+    open_map: Dict[int, int] = {}
+    for vid, d in acc.items():
+        open_map[vid] = int(d.get("OUT", 0) - (d.get("IN", 0) + d.get("DEFECT", 0) + d.get("FULL", 0)))
+        if open_map[vid] < 0:
+            open_map[vid] = 0
+    return open_map
+
+
+# --- Accueil (cartes) ---
 def summarize_client_for_index(c: Client) -> Card:
     sums = dict(
         db.session.query(Movement.type, func.coalesce(func.sum(Movement.qty), 0))
@@ -185,7 +206,6 @@ def summarize_client_for_index(c: Client) -> Card:
                           .join(Variant, Movement.variant_id == Variant.id)\
                           .filter(Movement.client_id == c.id)\
                           .order_by(Movement.created_at.asc()).all():
-        # keep last dates
         if m.type == "OUT":
             last_out = m.created_at
         elif m.type == "IN":
@@ -242,6 +262,7 @@ def summarize_client_detail(c: Client) -> Dict:
     beer_eur = 0.0
     deposit_eur = 0.0
     equipment = Equipment()
+    liters_out_cum = 0.0
 
     for m, v, p in client_movements_full(c.id):
         price = effective_price(m, v) or 0.0
@@ -251,6 +272,7 @@ def summarize_client_detail(c: Client) -> Dict:
         if m.type == "OUT":
             beer_eur += (m.qty or 0) * price
             deposit_eur += (m.qty or 0) * dep
+            liters_out_cum += (m.qty or 0) * (v.size_l or 0)
             combine_equipment(equipment, eq, +1)
         elif m.type in {"IN", "DEFECT", "FULL"}:
             deposit_eur -= (m.qty or 0) * dep
@@ -268,7 +290,6 @@ def summarize_client_detail(c: Client) -> Dict:
             notes=m.notes,
         ))
 
-    # Compteur de fûts en jeu (si utile ailleurs)
     sums = dict(
         db.session.query(Movement.type, func.coalesce(func.sum(Movement.qty), 0))
         .filter(Movement.client_id == c.id)
@@ -284,7 +305,8 @@ def summarize_client_detail(c: Client) -> Dict:
     return dict(
         rows=rows,
         kegs=kegs,
-        beer_eur=round(beer_eur, 2),        # -> beer_billed_cum
-        deposit_eur=round(deposit_eur, 2),  # -> deposit_in_play
-        equipment=equipment,                # -> equipment_totals
+        beer_eur=round(beer_eur, 2),
+        deposit_eur=round(deposit_eur, 2),
+        equipment=equipment,
+        liters_out_cum=round(liters_out_cum, 2),
     )
