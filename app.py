@@ -1,11 +1,10 @@
-# app.py — trame factorisée, même UX/comportement
 import os
 from datetime import datetime, date, time
 from flask import Flask, render_template, request, redirect, url_for, flash, session
 
 from models import db, Client, Product, Variant, Movement
 from seed import seed_if_empty
-import utils as U  # helpers centralisés
+import utils as U
 
 
 def create_app():
@@ -19,7 +18,7 @@ def create_app():
         db.create_all()
         seed_if_empty()
 
-    # ------------ Filtres Jinja ------------
+    # ----------------- Filtres Jinja -----------------
     @app.template_filter("dt")
     def fmt_dt(value):
         if not value:
@@ -42,7 +41,7 @@ def create_app():
         s = "+" if v >= 0 else "−"
         return f"{s}{abs(v):,.2f} €".replace(",", " ").replace(".", ",")
 
-    # ------------ Routes principales ------------
+    # ----------------- Routes -----------------
     @app.route("/")
     def index():
         clients = Client.query.order_by(Client.name.asc()).all()
@@ -62,13 +61,27 @@ def create_app():
             if not name:
                 flash("Nom obligatoire.", "warning")
                 return render_template("client_form.html")
-
             c = Client(name=name)
             db.session.add(c)
             db.session.commit()
             flash("Client créé.", "success")
             return redirect(url_for("clients"))
         return render_template("client_form.html")
+
+    # 👇 Route attendue par le bouton “Modifier” dans clients.html
+    @app.route("/client/<int:client_id>/edit", methods=["GET", "POST"])
+    def client_edit(client_id):
+        c = Client.query.get_or_404(client_id)
+        if request.method == "POST":
+            name = request.form.get("name", "").strip()
+            if not name:
+                flash("Nom obligatoire.", "warning")
+                return render_template("client_form.html", client=c)
+            c.name = name
+            db.session.commit()
+            flash("Client mis à jour.", "success")
+            return redirect(url_for("clients"))
+        return render_template("client_form.html", client=c)
 
     @app.route("/client/<int:client_id>")
     def client_detail(client_id):
@@ -78,7 +91,7 @@ def create_app():
 
     @app.route("/catalog")
     def catalog():
-        # Filtre écocup/gobelet hors catalogue
+        # Exclure écocup/gobelet
         variants = (
             db.session.query(Variant)
             .join(Product, Variant.product_id == Product.id)
@@ -88,15 +101,14 @@ def create_app():
         )
         return render_template("catalog.html", variants=variants)
 
-    # --------- Assistant mouvement (pas-à-pas) ---------
-    @app.route("/movement/new", methods=["GET", "POST"])
+    # ------------- Mouvements -------------
+    @app.route("/movement/new", methods=["GET"])
     def movement_new():
-        # On redirige vers l'assistant guide (wizard)
+        # Redirection vers l’assistant (pas-à-pas)
         return redirect(url_for("movement_wizard"))
 
     @app.route("/movement/wizard", methods=["GET", "POST"])
     def movement_wizard():
-        # Wiz = état en session (type, date, client, etc.)
         if "wiz" not in session:
             session["wiz"] = {}
         wiz = session["wiz"]
@@ -104,17 +116,13 @@ def create_app():
         if request.method == "GET":
             step = int(request.args.get("step", 1))
             if step == 1:
-                # Choix type + date
                 return render_template("movement_wizard.html", step=1, wiz=wiz)
             elif step == 2:
-                # Choix client
                 clients = Client.query.order_by(Client.name.asc()).all()
                 return render_template("movement_wizard.html", step=2, wiz=wiz, clients=clients)
             elif step == 3:
-                # Récap rapide avant lignes
                 return render_template("movement_wizard.html", step=3, wiz=wiz)
             elif step == 4:
-                # Lignes (produit/variante/qté/prix/consigne + matériel)
                 variants = (
                     db.session.query(Variant)
                     .join(Product, Variant.product_id == Product.id)
@@ -123,25 +131,21 @@ def create_app():
                     .all()
                 )
                 return render_template("movement_wizard.html", step=4, wiz=wiz, variants=variants)
-            else:
-                return redirect(url_for("movement_wizard", step=1))
+            return redirect(url_for("movement_wizard", step=1))
 
         # POST
         step = int(request.form.get("step", 1))
         if step == 1:
-            # Type, date
-            mtype = request.form.get("type")  # OUT/IN/DEFECT/FULL
+            mtype = request.form.get("type")  # 'OUT','IN','DEFECT','FULL'
             if mtype not in U.MOV_TYPES:
                 flash("Type invalide.", "warning")
                 return redirect(url_for("movement_wizard", step=1))
-
             wiz["type"] = mtype
             wiz["date"] = request.form.get("date") or None
             session.modified = True
             return redirect(url_for("movement_wizard", step=2))
 
         elif step == 2:
-            # Client
             client_id = request.form.get("client_id", type=int)
             c = Client.query.get(client_id)
             if not c:
@@ -152,21 +156,13 @@ def create_app():
             return redirect(url_for("movement_wizard", step=3))
 
         elif step == 3:
-            # Confirmation avant saisie lignes
-            # (on peut gérer aussi un nb de lignes, mais ici on passe à la table dynamique)
             session.modified = True
             return redirect(url_for("movement_wizard", step=4))
 
         elif step == 4:
-            # Sauvegarde des lignes
-            action = request.form.get("action") or "save"
-            if action != "save":
-                return redirect(url_for("movement_wizard", step=4))
-
-            client_id = wiz.get("client_id")
-            if not client_id:
-                flash("Client manquant.", "warning")
-                return redirect(url_for("movement_wizard", step=2))
+            if (wiz.get("client_id") is None) or (wiz.get("type") is None):
+                flash("Informations incomplètes.", "warning")
+                return redirect(url_for("movement_wizard", step=1))
 
             # Date finale
             if wiz.get("date"):
@@ -178,14 +174,14 @@ def create_app():
             else:
                 created_at = U.now_utc()
 
-            # Saisie en "table" (listes synchronisées)
+            # Champs “liste” (templates actuelles envoient des listes)
             variant_ids = request.form.getlist("variant_id")
             qtys = request.form.getlist("qty")
             unit_prices = request.form.getlist("unit_price_ttc")
             deposits = request.form.getlist("deposit_per_keg")
             notes = request.form.get("notes") or None
 
-            # On supporte aussi la saisie de matériel structuré (form du wizard)
+            # Matériel structuré (optionnel)
             t = request.form.get("eq_tireuse", type=int)
             c2 = request.form.get("eq_co2", type=int)
             cp = request.form.get("eq_comptoir", type=int)
@@ -199,6 +195,7 @@ def create_app():
                 notes = f"{(notes + ';') if notes else ''}{eq_note}"
 
             mtype = wiz["type"]
+            client_id = wiz["client_id"]
 
             created = 0
             for i, vid in enumerate(variant_ids):
@@ -212,11 +209,10 @@ def create_app():
                     up = float(unit_prices[i]) if i < len(unit_prices) and unit_prices[i] else None
                     dep = float(deposits[i]) if i < len(deposits) and deposits[i] else None
 
-                    # Prix par défaut = prix variante si vide
-                    if up is None:
-                        up = v.price_ttc if v and v.price_ttc is not None else None
+                    if up is None and v and v.price_ttc is not None:
+                        up = v.price_ttc
 
-                    # >>> CONSIGNE AUTOMATIQUE 30€ SI NON SAISIE <<<
+                    # CONSIGNE AUTOMATIQUE 30€ SI NON SAISIE
                     if dep is None:
                         dep = U.DEFAULT_DEPOSIT  # 30.0
                 except Exception:
@@ -239,20 +235,17 @@ def create_app():
             db.session.commit()
             if created:
                 flash(f"{created} ligne(s) enregistrée(s).", "success")
-                # On réinitialise la table des lignes, mais on garde type/client/date
                 return redirect(url_for("client_detail", client_id=client_id))
             else:
                 flash("Aucune ligne valide.", "warning")
                 return redirect(url_for("movement_wizard", step=4))
 
-        else:
-            return redirect(url_for("movement_wizard", step=1))
+        return redirect(url_for("movement_wizard", step=1))
 
     @app.route("/movement/<int:movement_id>/delete", methods=["GET", "POST"])
     def movement_delete(movement_id):
         m = Movement.query.get_or_404(movement_id)
         if request.method == "POST":
-            # revert stock
             U.apply_inventory_effect_reverse(m.type, m.variant_id, m.qty or 0)
             db.session.delete(m)
             db.session.commit()
@@ -260,7 +253,6 @@ def create_app():
             return redirect(url_for("client_detail", client_id=m.client_id))
         return render_template("movement_confirm_delete.html", m=m)
 
-    # --------- Pages annexes ---------
     @app.route("/stock")
     def stock():
         rows = U.get_stock_items()
@@ -271,7 +263,6 @@ def create_app():
         v = Variant.query.get_or_404(variant_id)
         return render_template("product.html", variant=v, product=v.product)
 
-    # --------- Erreurs ---------
     @app.errorhandler(404)
     def not_found(e):
         return render_template("404.html"), 404
