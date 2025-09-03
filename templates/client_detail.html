@@ -27,6 +27,23 @@
         </div>
       </div>
     </div>
+
+    <!-- Nouveau : Matériel prêté (net) -->
+    <div class="card">
+      <div class="card-header">Matériel prêté (net)</div>
+      <div class="card-body">
+        {% set eq = equipment_totals %}
+        <ul class="list-unstyled mb-0">
+          <li>Tireuse : <strong>{{ eq.tireuse or 0 }}</strong></li>
+          <li>CO₂ : <strong>{{ eq.co2 or 0 }}</strong></li>
+          <li>Comptoir : <strong>{{ eq.comptoir or 0 }}</strong></li>
+          <li>Tonnelle : <strong>{{ eq.tonnelle or 0 }}</strong></li>
+        </ul>
+        {% if (eq.tireuse or 0)==0 and (eq.co2 or 0)==0 and (eq.comptoir or 0)==0 and (eq.tonnelle or 0)==0 %}
+          <div class="text-muted small mt-2">Aucun matériel actuellement en prêt.</div>
+        {% endif %}
+      </div>
+    </div>
   </div>
 
   <!-- Colonne principale -->
