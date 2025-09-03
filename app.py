@@ -183,14 +183,11 @@ def create_app():
                     .order_by(Product.name, Variant.size_l)
                 )
 
-                # --- IMPORTANT : en Reprise (IN), on restreint aux fûts "en jeu"
-                # MAIS on AJOUTE TOUJOURS les variantes "Matériel seul" pour permettre
-                # une reprise de matériel sans fût.
+                # En Reprise (IN) : on limite aux fûts "en jeu", mais on AJOUTE TOUJOURS "Matériel seul"
                 if wiz.get("type") == "IN" and wiz.get("client_id"):
                     open_map = _open_kegs_by_variant(wiz["client_id"])
                     allowed_ids = {vid for vid, openq in open_map.items() if openq > 0}
 
-                    # Récupère les IDs des variantes "Matériel seul …" (avec ou sans accent)
                     equip_ids = set(
                         vid for (vid,) in (
                             db.session.query(Variant.id)
@@ -375,11 +372,12 @@ def create_app():
     @app.route("/movement/<int:movement_id>/delete", methods=["POST"])
     def movement_delete(movement_id):
         m = Movement.query.get_or_404(movement_id)
+        client_id = m.client_id  # sauvegarde avant suppression
+        # Rétablit le stock si nécessaire (OUT/FULL)
         U.revert_inventory_effect(m.type, m.variant_id, m.qty or 0)
-        client_id = m.client_id
         db.session.delete(m)
         db.session.commit()
-        flash("Mouvement supprimé.", "success")
+        flash("Saisie supprimée.", "success")
         return redirect(url_for("client_detail", client_id=client_id))
 
     # ---- Stock ----
