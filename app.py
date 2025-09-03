@@ -18,7 +18,7 @@ def create_app():
         db.create_all()
         seed_if_empty()
 
-    # ----------------- Healthcheck ultra léger -----------------
+    # ----------------- Healthcheck -----------------
     @app.route("/healthz", methods=["GET", "HEAD"])
     def healthz():
         return Response("ok", status=200, mimetype="text/plain")
@@ -52,7 +52,7 @@ def create_app():
         clients = Client.query.order_by(Client.name.asc()).all()
         cards = [U.summarize_client_for_index(c) for c in clients]
         totals = U.summarize_totals(cards)
-        alerts = U.compute_reorder_alerts()  # pour _macros.alerts_list
+        alerts = U.compute_reorder_alerts()
         return render_template("index.html", cards=cards, totals=totals, alerts=alerts)
 
     @app.route("/clients")
@@ -74,7 +74,6 @@ def create_app():
             return redirect(url_for("clients"))
         return render_template("client_form.html")
 
-    # ==== routes attendues par templates ====
     @app.route("/client/<int:client_id>/edit", methods=["GET", "POST"])
     def client_edit(client_id):
         c = Client.query.get_or_404(client_id)
@@ -92,11 +91,10 @@ def create_app():
     @app.route("/client/<int:client_id>/delete", methods=["POST"])
     def client_delete(client_id):
         c = Client.query.get_or_404(client_id)
-        db.session.delete(c)  # cascade sur mouvements OK via models.py
+        db.session.delete(c)
         db.session.commit()
         flash("Client supprimé.", "success")
         return redirect(url_for("clients"))
-    # ========================================
 
     @app.route("/client/<int:client_id>")
     def client_detail(client_id):
@@ -109,17 +107,15 @@ def create_app():
             .all()
         )
 
-        beer_billed_cum = view["beer_eur"]
-        deposit_in_play = view["deposit_eur"]
-        equipment_totals = view["equipment"]
-
         return render_template(
             "client_detail.html",
             client=c,
             movements=movements,
-            beer_billed_cum=beer_billed_cum,
-            deposit_in_play=deposit_in_play,
-            equipment_totals=equipment_totals,
+            beer_billed_cum=view["beer_eur"],
+            deposit_in_play=view["deposit_eur"],
+            equipment_totals=view["equipment"],
+            liters_out_cum=view.get("liters_out_cum", 0.0),   # compat EN
+            litres_out_cum=view.get("liters_out_cum", 0.0),  # compat FR
         )
 
     @app.route("/catalog")
@@ -144,6 +140,7 @@ def create_app():
             session["wiz"] = {}
         wiz = session["wiz"]
 
+        # Préselection client si query param
         q_client_id = request.args.get("client_id", type=int)
         if q_client_id:
             wiz["client_id"] = q_client_id
@@ -159,13 +156,23 @@ def create_app():
             elif step == 3:
                 return render_template("movement_wizard.html", step=3, wiz=wiz)
             elif step == 4:
-                variants = (
+                # Filtrage des variantes si Reprise: uniquement celles encore présentes chez le client
+                base_q = (
                     db.session.query(Variant)
                     .join(Product, Variant.product_id == Product.id)
                     .filter(~Product.name.ilike("%ecocup%"), ~Product.name.ilike("%gobelet%"))
                     .order_by(Product.name, Variant.size_l)
-                    .all()
                 )
+                if wiz.get("type") == "IN" and wiz.get("client_id"):
+                    open_map = U.get_open_kegs_by_variant(wiz["client_id"])
+                    allowed_ids = [vid for vid, openq in open_map.items() if openq > 0]
+                    if allowed_ids:
+                        base_q = base_q.filter(Variant.id.in_(allowed_ids))
+                    else:
+                        # aucune ref dispo -> liste vide
+                        base_q = base_q.filter(Variant.id.in_([-1]))
+                        flash("Aucune référence disponible à la reprise pour ce client.", "info")
+                variants = base_q.all()
                 return render_template("movement_wizard.html", step=4, wiz=wiz, variants=variants)
             return redirect(url_for("movement_wizard", step=1))
 
@@ -200,6 +207,7 @@ def create_app():
                 flash("Informations incomplètes.", "warning")
                 return redirect(url_for("movement_wizard", step=1))
 
+            # Date finale
             if wiz.get("date"):
                 try:
                     y, m_, d2 = [int(x) for x in wiz["date"].split("-")]
@@ -209,6 +217,7 @@ def create_app():
             else:
                 created_at = U.now_utc()
 
+            # Champs “liste”
             variant_ids = request.form.getlist("variant_id")
             qtys = request.form.getlist("qty")
             unit_prices = request.form.getlist("unit_price_ttc")
@@ -231,6 +240,10 @@ def create_app():
             mtype = wiz["type"]
             client_id = wiz["client_id"]
 
+            # --------- VALIDATION REPRISE ---------
+            open_map = U.get_open_kegs_by_variant(client_id) if mtype == "IN" else {}
+            violations = []  # (product_label, max_allowed)
+
             created = 0
             for i, vid in enumerate(variant_ids):
                 try:
@@ -245,10 +258,16 @@ def create_app():
 
                     if up is None and v and v.price_ttc is not None:
                         up = v.price_ttc
-
-                    # CONSIGNE AUTOMATIQUE 30€ SI NON SAISIE
                     if dep is None:
                         dep = U.DEFAULT_DEPOSIT  # 30.0
+
+                    # Reprise: vérifier solde chez le client
+                    if mtype == "IN":
+                        open_q = int(open_map.get(vid_int, 0))
+                        if open_q <= 0 or qty_int > open_q:
+                            label = f"{v.product.name} — {v.size_l} L"
+                            violations.append((label, open_q))
+                            continue  # n'enregistre pas cette ligne
                 except Exception:
                     continue
 
@@ -266,6 +285,12 @@ def create_app():
                 U.apply_inventory_effect(mtype, vid_int, qty_int)
                 created += 1
 
+            if violations:
+                db.session.rollback()
+                msgs = [f"{label} (max {maxq})" for (label, maxq) in violations]
+                flash("Reprise impossible pour : " + ", ".join(msgs), "warning")
+                return redirect(url_for("movement_wizard", step=4))
+
             db.session.commit()
             if created:
                 flash(f"{created} ligne(s) enregistrée(s).", "success")
@@ -276,7 +301,7 @@ def create_app():
 
         return redirect(url_for("movement_wizard", step=1))
 
-    # ==== suppression mouvement : GET de confirmation + POST de suppression ====
+    # ---- confirm/supp mouvement ----
     @app.route("/movement/<int:movement_id>/confirm-delete", methods=["GET"])
     def movement_confirm_delete(movement_id):
         m = Movement.query.get_or_404(movement_id)
@@ -291,7 +316,6 @@ def create_app():
         db.session.commit()
         flash("Mouvement supprimé.", "success")
         return redirect(url_for("client_detail", client_id=client_id))
-    # ==========================================================================
 
     @app.route("/stock")
     def stock():
