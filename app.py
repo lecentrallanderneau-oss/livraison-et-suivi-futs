@@ -47,7 +47,8 @@ def create_app():
         clients = Client.query.order_by(Client.name.asc()).all()
         cards = [U.summarize_client_for_index(c) for c in clients]
         totals = U.summarize_totals(cards)
-        return render_template("index.html", cards=cards, totals=totals)
+        alerts = U.compute_reorder_alerts()  # pour _macros.alerts_list
+        return render_template("index.html", cards=cards, totals=totals, alerts=alerts)
 
     @app.route("/clients")
     def clients():
@@ -68,7 +69,7 @@ def create_app():
             return redirect(url_for("clients"))
         return render_template("client_form.html")
 
-    # 👇 Route attendue par le bouton “Modifier” dans clients.html
+    # ==== routes attendues par templates ====
     @app.route("/client/<int:client_id>/edit", methods=["GET", "POST"])
     def client_edit(client_id):
         c = Client.query.get_or_404(client_id)
@@ -83,11 +84,41 @@ def create_app():
             return redirect(url_for("clients"))
         return render_template("client_form.html", client=c)
 
+    @app.route("/client/<int:client_id>/delete", methods=["POST"])
+    def client_delete(client_id):
+        c = Client.query.get_or_404(client_id)
+        db.session.delete(c)  # cascade sur mouvements OK via models.py
+        db.session.commit()
+        flash("Client supprimé.", "success")
+        return redirect(url_for("clients"))
+    # ========================================
+
     @app.route("/client/<int:client_id>")
     def client_detail(client_id):
         c = Client.query.get_or_404(client_id)
+        # Vue calculée (euros bière + consigne, matériel net)
         view = U.summarize_client_detail(c)
-        return render_template("client_detail.html", client=c, view=view)
+
+        # Mouvement list (objets ORM attendus par le template)
+        movements = (
+            Movement.query.filter_by(client_id=client_id)
+            .order_by(Movement.created_at.desc(), Movement.id.desc())
+            .all()
+        )
+
+        # Variables attendues par client_detail.html
+        beer_billed_cum = view["beer_eur"]
+        deposit_in_play = view["deposit_eur"]
+        equipment_totals = view["equipment"]
+
+        return render_template(
+            "client_detail.html",
+            client=c,
+            movements=movements,
+            beer_billed_cum=beer_billed_cum,
+            deposit_in_play=deposit_in_play,
+            equipment_totals=equipment_totals,
+        )
 
     @app.route("/catalog")
     def catalog():
@@ -112,6 +143,12 @@ def create_app():
         if "wiz" not in session:
             session["wiz"] = {}
         wiz = session["wiz"]
+
+        # Pré-sélection client si fourni en query string
+        q_client_id = request.args.get("client_id", type=int)
+        if q_client_id:
+            wiz["client_id"] = q_client_id
+            session.modified = True
 
         if request.method == "GET":
             step = int(request.args.get("step", 1))
@@ -242,16 +279,22 @@ def create_app():
 
         return redirect(url_for("movement_wizard", step=1))
 
-    @app.route("/movement/<int:movement_id>/delete", methods=["GET", "POST"])
+    # ==== suppression mouvement : GET de confirmation + POST de suppression ====
+    @app.route("/movement/<int:movement_id>/confirm-delete", methods=["GET"])
+    def movement_confirm_delete(movement_id):
+        m = Movement.query.get_or_404(movement_id)
+        return render_template("movement_confirm_delete.html", m=m)
+
+    @app.route("/movement/<int:movement_id>/delete", methods=["POST"])
     def movement_delete(movement_id):
         m = Movement.query.get_or_404(movement_id)
-        if request.method == "POST":
-            U.apply_inventory_effect_reverse(m.type, m.variant_id, m.qty or 0)
-            db.session.delete(m)
-            db.session.commit()
-            flash("Mouvement supprimé.", "success")
-            return redirect(url_for("client_detail", client_id=m.client_id))
-        return render_template("movement_confirm_delete.html", m=m)
+        U.apply_inventory_effect_reverse(m.type, m.variant_id, m.qty or 0)
+        client_id = m.client_id
+        db.session.delete(m)
+        db.session.commit()
+        flash("Mouvement supprimé.", "success")
+        return redirect(url_for("client_detail", client_id=client_id))
+    # ==========================================================================
 
     @app.route("/stock")
     def stock():
