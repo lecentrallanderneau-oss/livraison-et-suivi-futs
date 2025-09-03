@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional, Dict, List
+from types import SimpleNamespace
 
 from sqlalchemy import func
 from models import db, Client, Product, Variant, Movement, Inventory, ReorderRule
@@ -22,15 +23,18 @@ class Equipment:
 
 @dataclass
 class Card:
-    id: int           # <- attendu par index.html : c.id
-    name: str         # <- attendu par index.html : c.name
+    id: int           # attendu par index.html : c.id
+    name: str         # attendu par index.html : c.name
     kegs: int
     beer_eur: float
     deposit_eur: float
     equipment: Equipment
+    # Les dates peuvent manquer, le template gère via 'if'
+    last_out: Optional[object] = None
+    last_in: Optional[object] = None
 
 
-# --- Utilitaires temps/format ---
+# --- Utilitaires temps ---
 def now_utc():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc)
@@ -139,6 +143,24 @@ def get_stock_items():
     return rows
 
 
+def compute_reorder_alerts():
+    """Retourne une liste d'objets avec .product, .variant, .qty, .min_qty, .need pour _macros.alerts_list."""
+    alerts = []
+    for row in get_stock_items():
+        v = row["variant"]
+        qty = row["qty"]
+        min_qty = row["min_qty"]
+        if min_qty and qty < min_qty:
+            alerts.append(SimpleNamespace(
+                product=v.product,
+                variant=v,
+                qty=qty,
+                min_qty=min_qty,
+                need=max(0, min_qty - qty),
+            ))
+    return alerts
+
+
 # --- Accueil ---
 def summarize_client_for_index(c: Client) -> Card:
     sums = dict(
@@ -156,10 +178,19 @@ def summarize_client_for_index(c: Client) -> Card:
     beer_eur = 0.0
     deposit_eur = 0.0
     equipment = Equipment()
+    last_out = None
+    last_in = None
 
     for m, v in db.session.query(Movement, Variant)\
                           .join(Variant, Movement.variant_id == Variant.id)\
-                          .filter(Movement.client_id == c.id).all():
+                          .filter(Movement.client_id == c.id)\
+                          .order_by(Movement.created_at.asc()).all():
+        # keep last dates
+        if m.type == "OUT":
+            last_out = m.created_at
+        elif m.type == "IN":
+            last_in = m.created_at
+
         price = effective_price(m, v) or 0.0
         dep = effective_deposit(m)
         eq = parse_equipment(m.notes)
@@ -179,6 +210,8 @@ def summarize_client_for_index(c: Client) -> Card:
         beer_eur=round(beer_eur, 2),
         deposit_eur=round(deposit_eur, 2),
         equipment=equipment,
+        last_out=last_out,
+        last_in=last_in,
     )
 
 
@@ -235,6 +268,7 @@ def summarize_client_detail(c: Client) -> Dict:
             notes=m.notes,
         ))
 
+    # Compteur de fûts en jeu (si utile ailleurs)
     sums = dict(
         db.session.query(Movement.type, func.coalesce(func.sum(Movement.qty), 0))
         .filter(Movement.client_id == c.id)
@@ -250,7 +284,7 @@ def summarize_client_detail(c: Client) -> Dict:
     return dict(
         rows=rows,
         kegs=kegs,
-        beer_eur=round(beer_eur, 2),
-        deposit_eur=round(deposit_eur, 2),
-        equipment=equipment,
+        beer_eur=round(beer_eur, 2),        # -> beer_billed_cum
+        deposit_eur=round(deposit_eur, 2),  # -> deposit_in_play
+        equipment=equipment,                # -> equipment_totals
     )
