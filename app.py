@@ -57,7 +57,7 @@ def create_app():
     def index():
         clients = Client.query.order_by(Client.name.asc()).all()
 
-        # IMPORTANT : on ne lit AUCUNE colonne de variants (name/capacity_l n'existent pas en prod)
+        # IMPORTANT : ne lit AUCUNE colonne de variants (name/capacity_l peuvent ne pas exister en prod)
         low_stock = (
             db.session.query(
                 Product.name.label("product_name"),
@@ -123,13 +123,19 @@ def create_app():
         )
 
     # --------------------------------
-    # Clients (réintroduit pour base.html)
+    # Clients (attendu par base.html)
     # --------------------------------
     @app.route("/clients")
     def clients():
-        # Liste simple des clients (suppose l'existence de templates/clients.html dans ton projet)
         all_clients = Client.query.order_by(Client.name.asc()).all()
         return render_template("clients.html", clients=all_clients)
+
+    # --------------------------------
+    # Stock (attendu par base.html) → redirige vers l'accueil pour éviter l'erreur de menu
+    # --------------------------------
+    @app.route("/stock")
+    def stock():
+        return redirect(url_for("index"))
 
     # ------------------------------------------------
     # Éco-cups — liste + saisie d’une opération
