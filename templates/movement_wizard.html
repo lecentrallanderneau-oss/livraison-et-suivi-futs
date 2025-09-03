@@ -44,7 +44,8 @@
 
         <div>
           <label class="form-label">Date</label>
-          <input type="date" name="date" class="form-control" value="{{ wiz.get('date') or '' }}">
+          <input type="date" name="date" class="form-control" value="{{ wiz.get('date') or today_iso }}">
+          <div class="form-text">Laissez vide pour utiliser la date de saisie.</div>
         </div>
 
         <div class="d-flex gap-2">
@@ -194,7 +195,6 @@
             qty.removeAttribute('disabled');
             price.removeAttribute('disabled');
             deposit.removeAttribute('disabled');
-            // ne pas écraser les valeurs manuelles ; on laisse tel quel
           }
         }
 
