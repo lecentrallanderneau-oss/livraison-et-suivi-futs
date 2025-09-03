@@ -1,18 +1,17 @@
-# utils.py — fonctions de calcul/rendu
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List
 
 from sqlalchemy import func
 from models import db, Client, Product, Variant, Movement, Inventory, ReorderRule
 
-# --- Constantes partagées ---
+# --- Constantes ---
 DEFAULT_DEPOSIT = 30.0
-MOV_TYPES = {"OUT", "IN", "DEFECT", "FULL"}  # FULL = retour plein non percuté
+MOV_TYPES = {"OUT", "IN", "DEFECT", "FULL"}  # FULL = retour plein
 
 
-# --- Structures utilitaires ---
+# --- Structures utilitaires (adaptées aux templates) ---
 @dataclass
 class Equipment:
     tireuse: int = 0
@@ -23,20 +22,21 @@ class Equipment:
 
 @dataclass
 class Card:
-    client_id: int
-    client_name: str
+    id: int           # <- attendu par index.html : c.id
+    name: str         # <- attendu par index.html : c.name
     kegs: int
     beer_eur: float
     deposit_eur: float
     equipment: Equipment
 
 
-# --- Outillage générique ---
+# --- Utilitaires temps/format ---
 def now_utc():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc)
 
 
+# --- Notes -> matériel prêté/repris ---
 def parse_equipment(notes: Optional[str]) -> Equipment:
     if not notes:
         return Equipment()
@@ -71,17 +71,16 @@ def combine_equipment(dst: Equipment, src: Equipment, sign: int):
     dst.tonnelle += sign * (src.tonnelle or 0)
 
 
+# --- Prix / Consigne effectifs ---
 def effective_price(m: Movement, v: Variant) -> Optional[float]:
-    """Prix effectif du mouvement : priorité à la saisie, sinon prix variante."""
     return m.unit_price_ttc if m.unit_price_ttc is not None else v.price_ttc
 
 
 def effective_deposit(m: Movement) -> float:
-    """Consigne effective : valeur saisie sinon DEFAULT_DEPOSIT (30€)."""
     return m.deposit_per_keg if m.deposit_per_keg is not None else DEFAULT_DEPOSIT
 
 
-# --- Inventaire minimal (bar) ---
+# --- Inventaire (bar) ---
 def get_or_create_inventory(variant_id: int) -> Inventory:
     inv = Inventory.query.filter_by(variant_id=variant_id).first()
     if not inv:
@@ -92,11 +91,6 @@ def get_or_create_inventory(variant_id: int) -> Inventory:
 
 
 def apply_inventory_effect(mtype: str, variant_id: int, qty: int):
-    """
-    OUT (Livraison client) : stock bar --
-    IN  (Reprise client)   : stock bar ++
-    DEFECT / FULL          : sans effet stock bar
-    """
     if mtype not in MOV_TYPES:
         return
     if mtype == "OUT":
@@ -108,7 +102,6 @@ def apply_inventory_effect(mtype: str, variant_id: int, qty: int):
 
 
 def apply_inventory_effect_reverse(mtype: str, variant_id: int, qty: int):
-    """Inversion (utilisé à la suppression d'un mouvement)."""
     if mtype not in MOV_TYPES:
         return
     if mtype == "OUT":
@@ -119,13 +112,12 @@ def apply_inventory_effect_reverse(mtype: str, variant_id: int, qty: int):
         inv.qty = (inv.qty or 0) - (qty or 0)
 
 
-# --- Filtrage produits à exclure (écocups, gobelets) ---
+# --- Masquer écocups/gobelets ---
 def is_ecocup_product(product: Product) -> bool:
     n = (product.name or "").lower()
     return ("ecocup" in n) or ("gobelet" in n) or ("eco cup" in n) or ("eco-cup" in n)
 
 
-# --- Stock bar / seuil mini ---
 def get_stock_items():
     variants = (
         db.session.query(Variant)
@@ -134,10 +126,7 @@ def get_stock_items():
         .order_by(Product.name, Variant.size_l)
         .all()
     )
-    rules_by_vid = {
-        r.variant_id: r
-        for r in ReorderRule.query.all()
-    }
+    rules_by_vid = {r.variant_id: r for r in ReorderRule.query.all()}
     rows = []
     for v in variants:
         inv = get_or_create_inventory(v.id)
@@ -150,7 +139,7 @@ def get_stock_items():
     return rows
 
 
-# --- Vues synthèse / accueil ---
+# --- Accueil ---
 def summarize_client_for_index(c: Client) -> Card:
     sums = dict(
         db.session.query(Movement.type, func.coalesce(func.sum(Movement.qty), 0))
@@ -168,7 +157,6 @@ def summarize_client_for_index(c: Client) -> Card:
     deposit_eur = 0.0
     equipment = Equipment()
 
-    # Parcours complet des mouvements pour € bière / € consigne / matériel
     for m, v in db.session.query(Movement, Variant)\
                           .join(Variant, Movement.variant_id == Variant.id)\
                           .filter(Movement.client_id == c.id).all():
@@ -185,8 +173,8 @@ def summarize_client_for_index(c: Client) -> Card:
             combine_equipment(equipment, eq, -1)
 
     return Card(
-        client_id=c.id,
-        client_name=c.name,
+        id=c.id,
+        name=c.name,
         kegs=kegs,
         beer_eur=round(beer_eur, 2),
         deposit_eur=round(deposit_eur, 2),
@@ -206,7 +194,7 @@ def summarize_totals(cards: List[Card]) -> Dict[str, float]:
     )
 
 
-# --- Vue détail client ---
+# --- Détail client ---
 def client_movements_full(client_id: int):
     return db.session.query(Movement, Variant, Product)\
         .join(Variant, Movement.variant_id == Variant.id)\
@@ -247,7 +235,6 @@ def summarize_client_detail(c: Client) -> Dict:
             notes=m.notes,
         ))
 
-    # Compteur de fûts en jeu
     sums = dict(
         db.session.query(Movement.type, func.coalesce(func.sum(Movement.qty), 0))
         .filter(Movement.client_id == c.id)
