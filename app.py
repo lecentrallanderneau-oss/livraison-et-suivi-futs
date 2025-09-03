@@ -1,7 +1,7 @@
 import os
 from datetime import datetime, date, time
 from flask import Flask, render_template, request, redirect, url_for, flash, session
-from sqlalchemy import func, case, or_
+from sqlalchemy import func, case
 from models import db, Client, Product, Variant, Movement, Inventory, ReorderRule
 
 # ------------------ Config ------------------
@@ -19,30 +19,14 @@ def create_app():
 
     # -------------- Helpers --------------
     def _price_for_movement(m: Movement, v: Variant):
-        return m.unit_price_ttc if m.unit_price_ttc is not None else v.price_ttc
+        """Prix effectif d'un mouvement : priorité au prix saisi, sinon prix variante."""
+        if m.unit_price_ttc is not None:
+            return m.unit_price_ttc
+        return v.price_ttc
 
     def _deposit_for_movement(m: Movement):
+        """Consigne effective : valeur saisie sinon 0 (ou valeur par défaut au moment de l'enregistrement)."""
         return m.deposit_per_keg if m.deposit_per_keg is not None else 0.0
-
-    def parse_equipment(notes: str):
-        """Parse notes string for equipment fields comme 'tireuse=1;co2=0;comptoir=0;tonnelle=0'."""
-        eq = {'tireuse': 0, 'co2': 0, 'comptoir': 0, 'tonnelle': 0}
-        if not notes:
-            return eq
-        part = notes
-        if 'EQ|' in notes:
-            part = notes.split('EQ|', 1)[-1]
-        for item in part.split(';'):
-            if '=' in item:
-                k, v = item.split('=', 1)
-                k = k.strip().lower()
-                if k in eq:
-                    try:
-                        eq[k] = int(str(v).strip())
-                    except Exception:
-                        digits = ''.join(ch for ch in str(v) if ch.isdigit())
-                        eq[k] = int(digits) if digits else 0
-        return eq
 
     def get_or_create_inventory(variant_id: int) -> Inventory:
         inv = Inventory.query.filter_by(variant_id=variant_id).first()
@@ -54,19 +38,14 @@ def create_app():
 
     def compute_reorder_alerts():
         alerts = []
-        rules = ReorderRule.query.all()
-        rules_by_vid = {r.variant_id: r for r in rules}
+        rules = {r.variant_id: r for r in ReorderRule.query.all()}
         for v in Variant.query.all():
             inv = get_or_create_inventory(v.id)
-            rule = rules_by_vid.get(v.id)
-            if rule and rule.min_qty > 0 and inv.qty < rule.min_qty:
-                need = rule.min_qty - inv.qty
+            rule = rules.get(v.id)
+            if rule and rule.min_qty > 0 and (inv.qty or 0) < rule.min_qty:
+                need = rule.min_qty - (inv.qty or 0)
                 alerts.append(dict(
-                    variant=v,
-                    product=v.product,
-                    qty=inv.qty,
-                    min_qty=rule.min_qty,
-                    need=need
+                    variant=v, product=v.product, qty=inv.qty or 0, min_qty=rule.min_qty, need=need
                 ))
         return alerts
 
@@ -74,58 +53,52 @@ def create_app():
     @app.route('/')
     def index():
         clients = Client.query.order_by(Client.name).all()
-
         cards = []
-        for c in clients:
-            q = (
-                db.session.query(
-                    Movement.type,
-                    func.sum(Movement.qty).label('qty')
-                )
-                .filter(Movement.client_id == c.id)
-                .group_by(Movement.type)
-                .all()
-            )
-            total_out = sum(row.qty for row in q if row.type == 'OUT') or 0
-            total_in = sum(row.qty for row in q if row.type in ('IN', 'DEFECT')) or 0
-            kegs = total_out - total_in
 
+        for c in clients:
+            # Compteurs par type
+            sums = dict(db.session.query(
+                Movement.type, func.coalesce(func.sum(Movement.qty), 0)
+            ).filter(Movement.client_id == c.id).group_by(Movement.type).all())
+
+            total_out = int(sums.get('OUT', 0))
+            total_in = int(sums.get('IN', 0))
+            total_def = int(sums.get('DEFECT', 0))
+            total_full = int(sums.get('FULL', 0))
+
+            # Fûts présents chez le client
+            kegs = total_out - (total_in + total_def + total_full)
+
+            # Bière facturée (€) : OUT +, DEFECT -, FULL -
             beer_eur = 0.0
-            out_moves = (
+            moves = (
                 db.session.query(Movement, Variant)
                 .join(Variant, Movement.variant_id == Variant.id)
-                .filter(Movement.client_id == c.id, Movement.type == 'OUT')
+                .filter(Movement.client_id == c.id)
                 .all()
             )
-            for m, v in out_moves:
-                price = _price_for_movement(m, v) or 0.0
-                beer_eur += (m.qty or 0) * price
+            for m, v in moves:
+                eff_price = _price_for_movement(m, v) or 0.0
+                if m.type == 'OUT':
+                    beer_eur += (m.qty or 0) * eff_price
+                elif m.type in ('DEFECT', 'FULL'):
+                    beer_eur -= (m.qty or 0) * eff_price  # remboursement
 
+            # Consigne en jeu (€) : OUT +, IN/DEFECT/FULL -
             deposit = 0.0
-            all_moves = db.session.query(Movement).filter(Movement.client_id == c.id).all()
-            for m in all_moves:
+            for m, v in moves:
+                dep = _deposit_for_movement(m) or 0.0
                 sign = 1 if m.type == 'OUT' else -1
-                deposit += sign * (_deposit_for_movement(m) or 0.0) * (m.qty or 0)
+                deposit += sign * dep * (m.qty or 0)
 
-            last_out = (
-                db.session.query(func.max(Movement.created_at))
-                .filter(Movement.client_id == c.id, Movement.type == 'OUT')
-                .scalar()
-            )
-            last_in = (
-                db.session.query(func.max(Movement.created_at))
-                .filter(Movement.client_id == c.id, Movement.type == 'IN')
-                .scalar()
-            )
+            last_out = db.session.query(func.max(Movement.created_at))\
+                .filter(Movement.client_id == c.id, Movement.type == 'OUT').scalar()
+            last_in = db.session.query(func.max(Movement.created_at))\
+                .filter(Movement.client_id == c.id, Movement.type == 'IN').scalar()
 
             cards.append(type('Card', (), dict(
-                id=c.id,
-                name=c.name,
-                kegs=kegs,
-                beer_eur=beer_eur,
-                deposit_eur=deposit,
-                last_out=last_out,
-                last_in=last_in,
+                id=c.id, name=c.name, kegs=kegs, beer_eur=beer_eur, deposit_eur=deposit,
+                last_out=last_out, last_in=last_in
             )))
 
         alerts = compute_reorder_alerts()
@@ -176,40 +149,15 @@ def create_app():
     def client_detail(client_id):
         client = Client.query.get_or_404(client_id)
 
-        rows = (
-            db.session.query(
-                Variant.id,
-                Product.name.label('product'),
-                Variant.size_l,
-                func.sum(
-                    case(
-                        (Movement.type == 'OUT', Movement.qty),
-                        (Movement.type.in_(['IN', 'DEFECT']), -Movement.qty),
-                        else_=0
-                    )
-                ).label('stock')
-            )
-            .join(Movement, Movement.variant_id == Variant.id, isouter=True)
-            .join(Product, Variant.product_id == Product.id)
-            .filter(or_(Movement.client_id == client.id, Movement.client_id.is_(None)))
-            .group_by(Variant.id, Product.name, Variant.size_l)
-            .order_by(Product.name, Variant.size_l)
-            .all()
-        )
-
-        stock_rows = [type('Row', (), dict(product=product, size_l=size_l, stock=stock or 0))
-                      for _vid, product, size_l, stock in rows]
-
-        delivered_qty_cum = (
-            db.session.query(func.coalesce(func.sum(Movement.qty * Variant.size_l), 0))
-            .join(Variant, Movement.variant_id == Variant.id)
-            .filter(Movement.client_id == client.id, Movement.type == 'OUT')
-            .scalar()
-        )
+        # Totaux livrés (litres), bière facturée cumulée, consignes en jeu
+        delivered_qty_cum = db.session.query(
+            func.coalesce(func.sum(Movement.qty * Variant.size_l), 0)
+        ).join(Variant, Movement.variant_id == Variant.id)\
+         .filter(Movement.client_id == client.id, Movement.type == 'OUT')\
+         .scalar()
 
         beer_billed_cum = 0.0
         deposit_in_play = 0.0
-        equipment_totals = {'tireuse': 0, 'co2': 0, 'comptoir': 0, 'tonnelle': 0}
 
         moves = (
             db.session.query(Movement, Variant, Product)
@@ -222,21 +170,20 @@ def create_app():
 
         movements_view = []
         for m, v, p in moves:
-            if m.type == 'OUT':
-                beer_billed_cum += (m.qty or 0) * (_price_for_movement(m, v) or 0.0)
-                deposit_in_play += (m.qty or 0) * (_deposit_for_movement(m) or 0.0)
-                sign = 1
-            else:
-                deposit_in_play -= (m.qty or 0) * (_deposit_for_movement(m) or 0.0)
-                sign = -1
+            eff_price = _price_for_movement(m, v) or 0.0
+            dep = _deposit_for_movement(m) or 0.0
 
-            eq = parse_equipment(m.notes)
-            for k in equipment_totals.keys():
-                equipment_totals[k] += sign * int(eq.get(k, 0))
+            if m.type == 'OUT':
+                beer_billed_cum += (m.qty or 0) * eff_price
+                deposit_in_play += (m.qty or 0) * dep
+            elif m.type in ('IN', 'DEFECT', 'FULL'):
+                deposit_in_play -= (m.qty or 0) * dep
+                if m.type in ('DEFECT', 'FULL'):
+                    beer_billed_cum -= (m.qty or 0) * eff_price  # remboursement
 
             movements_view.append(type('MV', (), dict(
                 id=m.id,
-                created_at=m.created_at.date().isoformat() if m.created_at else '',
+                created_at=(m.created_at.date().isoformat() if m.created_at else ''),
                 type=m.type,
                 qty=m.qty,
                 unit_price_ttc=m.unit_price_ttc,
@@ -249,15 +196,13 @@ def create_app():
         return render_template(
             'client_detail.html',
             client=client,
-            stock_rows=stock_rows,
             movements=movements_view,
             delivered_qty_cum=delivered_qty_cum or 0,
             beer_billed_cum=beer_billed_cum or 0.0,
             deposit_in_play=deposit_in_play or 0.0,
-            equipment_totals=type('EQ', (), equipment_totals)
         )
 
-    # ---- Mouvement (ancienne page) -> redirige vers l'assistant pas-à-pas
+    # ---- Ancienne page -> redirige vers l'assistant pas-à-pas
     @app.route('/movement/new', methods=['GET', 'POST'])
     def movement_new():
         cid = request.args.get('client_id', type=int)
@@ -266,9 +211,14 @@ def create_app():
     # ---- Assistant pas-à-pas ----
     @app.route('/movement/wizard', methods=['GET', 'POST'])
     def movement_wizard():
-        # steps: 1-type, 2-client, 3-date, 4-lignes
+        # steps: 1-type, 2-client, 3-date (optionnelle), 4-lignes
         wiz = session.get('wiz', {'step': 1})
         step = int(request.args.get('step', wiz.get('step', 1)))
+
+        # Préselection depuis ?client_id=...
+        q_cid = request.args.get('client_id', type=int)
+        if q_cid and not wiz.get('client_id'):
+            wiz['client_id'] = q_cid
 
         if request.method == 'POST':
             action = request.form.get('action', 'next')
@@ -277,8 +227,8 @@ def create_app():
             else:
                 if step == 1:
                     mtype = request.form.get('type')
-                    if mtype not in ('OUT', 'IN'):
-                        flash("Choisir Livraison (OUT) ou Reprise (IN).", "warning")
+                    if mtype not in ('OUT', 'IN', 'DEFECT', 'FULL'):
+                        flash("Choisir Livraison, Reprise, Défectueux ou Retour plein.", "warning")
                     else:
                         wiz['type'] = mtype
                         step = 2
@@ -290,13 +240,10 @@ def create_app():
                         wiz['client_id'] = client_id
                         step = 3
                 elif step == 3:
-                    d = request.form.get('date')
-                    try:
-                        y, m, d2 = [int(x) for x in d.split('-')]
-                        wiz['date'] = date(y, m, d2).isoformat()
-                        step = 4
-                    except Exception:
-                        flash("Date invalide.", "warning")
+                    d = request.form.get('date', '').strip()
+                    # Date optionnelle : si vide, on utilisera 'now'
+                    wiz['date'] = d or ''
+                    step = 4
                 elif step == 4:
                     variant_ids = request.form.getlist('variant_id')
                     qtys = request.form.getlist('qty')
@@ -304,10 +251,15 @@ def create_app():
                     deposits = request.form.getlist('deposit_per_keg')
                     notes = request.form.get('notes') or None
 
-                    created_at = None
+                    # Date finale
                     if wiz.get('date'):
-                        y, m, d2 = [int(x) for x in wiz['date'].split('-')]
-                        created_at = datetime.combine(date(y, m, d2), time(hour=12, minute=0, second=0))
+                        try:
+                            y, m_, d2 = [int(x) for x in wiz['date'].split('-')]
+                            created_at = datetime.combine(date(y, m_, d2), time(hour=12))
+                        except Exception:
+                            created_at = datetime.utcnow()
+                    else:
+                        created_at = datetime.utcnow()
 
                     client_id = int(wiz['client_id'])
                     mtype = wiz['type']
@@ -319,8 +271,19 @@ def create_app():
                             qty_int = int(qtys[i]) if i < len(qtys) else 0
                             if qty_int <= 0:
                                 continue
+                            # Valeurs par défaut côté serveur :
+                            v = Variant.query.get(vid_int)
                             up = float(unit_prices[i]) if i < len(unit_prices) and unit_prices[i] else None
                             dep = float(deposits[i]) if i < len(deposits) and deposits[i] else None
+
+                            # Lors d'une LIVRAISON (OUT), imposer d'office :
+                            # - prix unitaire = prix variante si non saisi
+                            # - consigne = 30 € si non saisie
+                            if mtype == 'OUT':
+                                if up is None:
+                                    up = v.price_ttc if v and v.price_ttc is not None else None
+                                if dep is None:
+                                    dep = 30.0
                         except Exception:
                             continue
 
@@ -332,15 +295,21 @@ def create_app():
                             unit_price_ttc=up,
                             deposit_per_keg=dep,
                             notes=notes,
-                            created_at=created_at or datetime.utcnow(),
+                            created_at=created_at,
                         )
                         db.session.add(mv)
                         created += 1
 
-                        # Impact stock bar: OUT baisse, IN n'affecte pas
+                        # Impact stock bar :
+                        # - OUT : baisse
+                        # - FULL (retour plein) : augmente
+                        # - IN/DEFECT : pas d'impact (reprise vide ou défectueuse à gérer hors stock bar)
                         if mtype == 'OUT':
                             inv = get_or_create_inventory(vid_int)
                             inv.qty = (inv.qty or 0) - qty_int
+                        elif mtype == 'FULL':
+                            inv = get_or_create_inventory(vid_int)
+                            inv.qty = (inv.qty or 0) + qty_int
 
                     db.session.commit()
                     session.pop('wiz', None)
@@ -354,10 +323,6 @@ def create_app():
             return render_template('movement_wizard.html', step=1, wiz=wiz)
         elif step == 2:
             clients = Client.query.order_by(Client.name).all()
-            q_cid = request.args.get('client_id', type=int)
-            if q_cid:
-                wiz['client_id'] = q_cid
-                session['wiz'] = wiz
             return render_template('movement_wizard.html', step=2, wiz=wiz, clients=clients)
         elif step == 3:
             return render_template('movement_wizard.html', step=3, wiz=wiz)
@@ -379,10 +344,13 @@ def create_app():
     def movement_delete(movement_id):
         m = Movement.query.get_or_404(movement_id)
         cid = m.client_id
-        # Reverser l'impact stock si c'était un OUT
+        # Reverser l'impact stock si c'était OUT / FULL
         if m.type == 'OUT':
             inv = get_or_create_inventory(m.variant_id)
             inv.qty = (inv.qty or 0) + (m.qty or 0)
+        elif m.type == 'FULL':
+            inv = get_or_create_inventory(m.variant_id)
+            inv.qty = (inv.qty or 0) - (m.qty or 0)
         db.session.delete(m)
         db.session.commit()
         flash("Mouvement supprimé.", "success")
@@ -469,7 +437,6 @@ DEFAULT_CATALOG = [
 ]
 
 REORDER_DEFAULTS = [
-    # (product_name, size_l, min_qty)
     ("Coreff Blonde", 30, 5),
     ("Coreff Blonde", 20, 2),
 ]
@@ -492,13 +459,13 @@ def seed_if_empty():
                 db.session.add(v)
         db.session.commit()
 
-    # Inventory rows for all variants
+    # Inventory rows
     for v in Variant.query.all():
         if not Inventory.query.filter_by(variant_id=v.id).first():
             db.session.add(Inventory(variant_id=v.id, qty=0))
     db.session.commit()
 
-    # Reorder rules for defaults
+    # Reorder rules
     for pname, size, minq in REORDER_DEFAULTS:
         v = (
             db.session.query(Variant)
