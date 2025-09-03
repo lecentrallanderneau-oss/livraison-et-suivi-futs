@@ -1,40 +1,36 @@
-{% macro alerts_list(alerts) -%}
-  {% if alerts and alerts|length > 0 %}
-  <div class="alert alert-warning d-flex flex-column gap-1">
-    <div class="fw-bold">⚠️ Réassort conseillé</div>
-    <ul class="mb-0">
-      {% for a in alerts %}
-        <li>{{ a.product.name }} — {{ a.variant.size_l }} L : en stock {{ a.qty }}, mini {{ a.min_qty }}, à commander {{ a.need }}</li>
-      {% endfor %}
-    </ul>
-    <a href="{{ url_for('stock') }}" class="small">Mettre à jour l'inventaire ›</a>
-  </div>
-  {% endif %}
-{%- endmacro %}
+{# Macros UI partagées #}
 
-{% macro equipment_badges(eq) -%}
-  {% set has_eq = (eq.tireuse>0 or eq.co2>0 or eq.comptoir>0 or eq.tonnelle>0) %}
-  <div class="d-flex align-items-center flex-wrap gap-2">
-    <div class="muted small">Matériel prêté :</div>
-    {% if has_eq %}
-      {% if eq.tireuse>0 %}<span class="chip chip-gray">Tireuse × {{ eq.tireuse }}</span>{% endif %}
-      {% if eq.co2>0 %}<span class="chip chip-gray">CO₂ × {{ eq.co2 }}</span>{% endif %}
-      {% if eq.comptoir>0 %}<span class="chip chip-gray">Comptoir × {{ eq.comptoir }}</span>{% endif %}
-      {% if eq.tonnelle>0 %}<span class="chip chip-gray">Tonnelle × {{ eq.tonnelle }}</span>{% endif %}
-    {% else %}
-      <span class="text-muted small">Aucun matériel en prêt</span>
-    {% endif %}
+{% macro stat_card(title, value) -%}
+<div class="card shadow-sm">
+  <div class="card-body py-3">
+    <div class="text-muted small mb-1">{{ title }}</div>
+    <div class="h4 mb-0">{{ value }}</div>
   </div>
+</div>
 {%- endmacro %}
 
 {% macro equipment_stats(eq) -%}
-  <ul class="list-unstyled mb-0">
-    <li>Tireuse : <strong>{{ eq.tireuse or 0 }}</strong></li>
-    <li>CO₂ : <strong>{{ eq.co2 or 0 }}</strong></li>
-    <li>Comptoir : <strong>{{ eq.comptoir or 0 }}</strong></li>
-    <li>Tonnelle : <strong>{{ eq.tonnelle or 0 }}</strong></li>
-  </ul>
-  {% if (eq.tireuse or 0)==0 and (eq.co2 or 0)==0 and (eq.comptoir or 0)==0 and (eq.tonnelle or 0)==0 %}
-    <div class="text-muted small mt-2">Aucun matériel actuellement en prêt.</div>
+<ul class="list-unstyled mb-0">
+  <li>Tireuse : <strong>{{ (eq.tireuse or 0) }}</strong></li>
+  <li>CO₂ : <strong>{{ (eq.co2 or 0) }}</strong></li>
+  <li>Comptoir : <strong>{{ (eq.comptoir or 0) }}</strong></li>
+  <li>Tonnelle : <strong>{{ (eq.tonnelle or 0) }}</strong></li>
+</ul>
+{%- endmacro %}
+
+{% macro alerts_list(alerts) -%}
+  {% if alerts and alerts|length > 0 %}
+    <div class="alert alert-warning">
+      <div class="fw-bold mb-1">Seuils de réappro :</div>
+      <ul class="mb-0">
+        {% for a in alerts %}
+          <li>
+            {{ a.product.name }} — {{ a.variant.size_l }} L :
+            stock {{ a.qty }} / min {{ a.min_qty }}
+            (besoin {{ a.need }})
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
   {% endif %}
 {%- endmacro %}
