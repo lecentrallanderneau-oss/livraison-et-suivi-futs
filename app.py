@@ -2,14 +2,45 @@ import os
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, flash
 from sqlalchemy import func, desc
-from models import db, Client, Product, Variant, Movement, Inventory, ReorderRule, EquipmentLoan, EcocupOperation
+from models import (
+    db,
+    Client,
+    Product,
+    Variant,
+    Movement,
+    Inventory,
+    ReorderRule,
+    EquipmentLoan,
+    EcocupOperation,
+)
+
+# -------------
+# Utilitaires (définis AVANT l'appel)
+# -------------
+def _ensure_seed_clients():
+    """
+    Assure quelques clients par défaut si la table est vide.
+    (Conserve la logique existante, sans toucher aux données en place.)
+    """
+    if Client.query.count() == 0:
+        names = [
+            "Landerneau Football Club",
+            "Ville de Landerneau",
+            "Association des Commerçants",
+        ]
+        for n in names:
+            db.session.add(Client(name=n))
+        db.session.commit()
+
 
 # ---------------------------------------------------------------------------------
-# App & Config (identique à l’existant, seules routes Éco-cups ajoutées)
+# App & Config (identique à l’existant, seules routes Éco-cups ajoutées précédemment)
 # ---------------------------------------------------------------------------------
 def create_app():
     app = Flask(__name__)
-    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///data.db")
+    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
+        "DATABASE_URL", "sqlite:///data.db"
+    )
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.secret_key = os.environ.get("SECRET_KEY", "dev")
 
@@ -17,7 +48,7 @@ def create_app():
 
     with app.app_context():
         db.create_all()
-        _ensure_seed_clients()
+        _ensure_seed_clients()  # <-- maintenant OK (définie plus haut)
 
     # --------------------------------
     # Routes existantes (accueil, etc)
@@ -43,30 +74,48 @@ def create_app():
             .all()
         )
 
-        # NOUVEAU : total Éco-cups à facturer (sur les 30 derniers jours, par exemple)
-        last_30_total = (
-            db.session.query(func.coalesce(func.sum(EcocupOperation.qty_loaned), 0),
-                             func.coalesce(func.sum(EcocupOperation.qty_returned), 0),
-                             func.coalesce(func.sum((EcocupOperation.qty_loaned - EcocupOperation.qty_returned) * EcocupOperation.lost_fee_per), 0.0),
-                             func.coalesce(func.sum(EcocupOperation.qty_returned * EcocupOperation.wash_fee_per), 0.0))
-            .filter(EcocupOperation.op_date >= datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0))
+        # NOUVEAU : total Éco-cups du jour (minuit -> maintenant)
+        day_agg = (
+            db.session.query(
+                func.coalesce(func.sum(EcocupOperation.qty_loaned), 0),
+                func.coalesce(func.sum(EcocupOperation.qty_returned), 0),
+                func.coalesce(
+                    func.sum(
+                        (EcocupOperation.qty_loaned - EcocupOperation.qty_returned)
+                        * EcocupOperation.lost_fee_per
+                    ),
+                    0.0,
+                ),
+                func.coalesce(
+                    func.sum(
+                        EcocupOperation.qty_returned * EcocupOperation.wash_fee_per
+                    ),
+                    0.0,
+                ),
+            )
+            .filter(
+                EcocupOperation.op_date
+                >= datetime.utcnow().replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+            )
             .first()
         )
-        day_loaned, day_returned, day_lost_amount, day_wash_amount = last_30_total
+        day_loaned, day_returned, day_lost_amount, day_wash_amount = day_agg
         day_total_amount = round((day_lost_amount or 0) + (day_wash_amount or 0), 2)
 
         return render_template(
             "index.html",
             clients=clients,
             low_stock=low_stock,
-            last_ecocup_ops=last_ecocup_ops,            # <-- nouveau
+            last_ecocup_ops=last_ecocup_ops,  # <-- nouveau
             day_ecocup_summary={
                 "loaned": day_loaned or 0,
                 "returned": day_returned or 0,
                 "lost_amount": round(day_lost_amount or 0, 2),
                 "wash_amount": round(day_wash_amount or 0, 2),
                 "total": day_total_amount,
-            },                                           # <-- nouveau
+            },  # <-- nouveau
         )
 
     # ------------------------------------------------
@@ -87,11 +136,15 @@ def create_app():
 
                 if client_id <= 0:
                     flash("Choisis un client.", "warning")
-                    return render_template("ecocups.html", clients=clients, ops=_list_ecocup_ops())
+                    return render_template(
+                        "ecocups.html", clients=clients, ops=_list_ecocup_ops()
+                    )
 
                 if qty_loaned < 0 or qty_returned < 0:
                     flash("Les quantités ne peuvent pas être négatives.", "warning")
-                    return render_template("ecocups.html", clients=clients, ops=_list_ecocup_ops())
+                    return render_template(
+                        "ecocups.html", clients=clients, ops=_list_ecocup_ops()
+                    )
 
                 op = EcocupOperation(
                     client_id=client_id,
@@ -104,14 +157,19 @@ def create_app():
                 db.session.add(op)
                 db.session.commit()
 
-                flash(f"Opération Éco-cups enregistrée : total {op.total_amount:.2f} €", "success")
+                flash(
+                    f"Opération Éco-cups enregistrée : total {op.total_amount:.2f} €",
+                    "success",
+                )
                 return redirect(url_for("ecocups"))
 
             except Exception as e:
                 db.session.rollback()
                 flash(f"Erreur lors de l’enregistrement : {e}", "danger")
 
-        return render_template("ecocups.html", clients=clients, ops=_list_ecocup_ops())
+        return render_template(
+            "ecocups.html", clients=clients, ops=_list_ecocup_ops()
+        )
 
     def _list_ecocup_ops(limit: int = 200):
         return (
@@ -119,24 +177,6 @@ def create_app():
             .limit(limit)
             .all()
         )
-
-    # -------------
-    # Utilitaires
-    # -------------
-    def _ensure_seed_clients():
-        """
-        Assure quelques clients par défaut si la table est vide.
-        (Conserve la logique existante, sans toucher aux données en place.)
-        """
-        if Client.query.count() == 0:
-            names = [
-                "Landerneau Football Club",
-                "Ville de Landerneau",
-                "Association des Commerçants",
-            ]
-            for n in names:
-                db.session.add(Client(name=n))
-            db.session.commit()
 
     return app
 
@@ -147,4 +187,6 @@ def create_app():
 app = create_app()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=True)
+    app.run(
+        host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=True
+    )
