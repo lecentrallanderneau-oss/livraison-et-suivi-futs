@@ -25,13 +25,11 @@
       <tbody>
         {% if rows and rows|length > 0 %}
           {% for it in rows %}
-            {# ---- Normalisation robuste des données ---- #}
             {% set ismap = it is mapping %}
             {% set v = ( it['variant'] if (ismap and 'variant' in it)
                          else (it.variant if it.variant is defined else None) ) %}
             {% set v = v or ( it['v'] if (ismap and 'v' in it) else (it.v if it.v is defined else None) ) %}
 
-            {# Quantité en stock #}
             {% set inv = ( it['inventory'] if (ismap and 'inventory' in it)
                            else (it.inventory if it.inventory is defined else None) ) %}
             {% set qty_from_inv = (inv.qty if inv is not none and inv.qty is defined else none) %}
@@ -46,7 +44,6 @@
               {% set qty_field = it.qty %}
             {% endif %}
 
-            {# Seuil mini #}
             {% set rule = ( it['rule'] if (ismap and 'rule' in it)
                             else (it.rule if it.rule is defined else None) ) %}
             {% set min_from_rule = (rule.min_qty if rule is not none and rule.min_qty is defined else none) %}
@@ -59,10 +56,7 @@
               {% set min_field = it.min_qty %}
             {% endif %}
 
-            {# Prix TTC #}
             {% set price_ttc = (v.price_ttc if v is not none and v.price_ttc is defined else none) %}
-
-            {# Identifiant variante s’il existe #}
             {% set v_id = (v.id if v is not none and v.id is defined else none) %}
 
             <tr>
@@ -85,12 +79,7 @@
                     min="0" step="1"
                     value="{{ qty_field }}">
                 {% else %}
-                  <input
-                    type="number"
-                    class="form-control text-end"
-                    min="0" step="1"
-                    value="{{ qty_field }}"
-                    disabled>
+                  <input type="number" class="form-control text-end" min="0" step="1" value="{{ qty_field }}" disabled>
                 {% endif %}
               </td>
 
@@ -103,12 +92,7 @@
                     min="0" step="1"
                     value="{{ min_field }}">
                 {% else %}
-                  <input
-                    type="number"
-                    class="form-control text-end"
-                    min="0" step="1"
-                    value="{{ min_field }}"
-                    disabled>
+                  <input type="number" class="form-control text-end" min="0" step="1" value="{{ min_field }}" disabled>
                 {% endif %}
               </td>
             </tr>
