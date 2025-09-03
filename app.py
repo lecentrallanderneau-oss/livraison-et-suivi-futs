@@ -58,6 +58,15 @@ def create_app():
             return "-"
         return f"{v:,.2f} €".replace(",", " ").replace(".", ",")
 
+    @app.template_filter("signed_eur")
+    def fmt_signed_eur(v):
+        """Affiche +12,34 € / -12,34 € avec format français."""
+        if v is None:
+            return "-"
+        sign = "+" if v > 0 else ("-" if v < 0 else "")
+        abs_v = abs(v)
+        return f"{sign}{abs_v:,.2f} €".replace(",", " ").replace(".", ",")
+
     # ----------------- Helper: fûts “ouverts” par variante chez un client -----------------
     def _open_kegs_by_variant(client_id: int):
         out_rows = dict(
