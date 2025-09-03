@@ -1,125 +1,206 @@
 {% extends "base.html" %}
 {% block title %}Assistant mouvement{% endblock %}
+
 {% block content %}
-<h1 class="h3">Assistant mouvement</h1>
-<hr>
+<h1 class="h3 mb-3">Assistant de mouvement</h1>
 
-{% if step == 1 %}
-<form method="post" class="card p-3">
-  <div class="mb-3">
-    <label class="form-label">Choisir le type</label>
-    <div class="form-check">
-      <input class="form-check-input" type="radio" name="type" id="t1" value="OUT" {{ wiz.type=='OUT' and 'checked' or '' }}>
-      <label class="form-check-label" for="t1">Livraison</label>
-    </div>
-    <div class="form-check">
-      <input class="form-check-input" type="radio" name="type" id="t2" value="IN" {{ wiz.type=='IN' and 'checked' or '' }}>
-      <label class="form-check-label" for="t2">Reprise</label>
-    </div>
-    <div class="form-check">
-      <input class="form-check-input" type="radio" name="type" id="t3" value="DEFECT" {{ wiz.type=='DEFECT' and 'checked' or '' }}>
-      <label class="form-check-label" for="t3">Défectueux (déconsigne + remboursement)</label>
-    </div>
-    <div class="form-check">
-      <input class="form-check-input" type="radio" name="type" id="t4" value="FULL" {{ wiz.type=='FULL' and 'checked' or '' }}>
-      <label class="form-check-label" for="t4">Retour plein non percuté (déconsigne + remboursement + retour stock bar)</label>
-    </div>
-  </div>
-  <div class="d-flex gap-2">
-    <button name="action" value="next" class="btn btn-primary">Suivant</button>
-  </div>
-</form>
+<div class="card">
+  <div class="card-body">
 
-{% elif step == 2 %}
-<form method="post" class="card p-3">
-  <div class="mb-3">
-    <label class="form-label">Client</label>
-    <select name="client_id" class="form-select" required>
-      {% for c in clients %}
-        <option value="{{ c.id }}" {{ wiz.client_id and wiz.client_id==c.id and 'selected' or '' }}>{{ c.name }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="d-flex gap-2">
-    <button name="action" value="prev" class="btn btn-outline-secondary">Précédent</button>
-    <button name="action" value="next" class="btn btn-primary">Suivant</button>
-  </div>
-</form>
+    {% if step == 1 %}
+      <!-- ÉTAPE 1 : TYPE + DATE -->
+      <form method="post" class="vstack gap-3">
+        <input type="hidden" name="step" value="1">
 
-{% elif step == 3 %}
-<form method="post" class="card p-3">
-  <div class="mb-3">
-    <label class="form-label">Date (optionnelle)</label>
-    <input type="date" name="date" class="form-control" value="{{ wiz.date or '' }}">
-    <div class="form-text">Si vide, la date d’aujourd’hui sera utilisée automatiquement.</div>
-  </div>
-  <div class="d-flex gap-2">
-    <button name="action" value="prev" class="btn btn-outline-secondary">Précédent</button>
-    <button name="action" value="next" class="btn btn-primary">Suivant</button>
-  </div>
-</form>
+        <div>
+          <label class="form-label">Type de mouvement</label>
+          <div class="row g-2">
+            <div class="col-6 col-md-3">
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="type" id="type_out" value="OUT" {{ 'checked' if wiz.get('type') == 'OUT' else '' }} required>
+                <label class="form-check-label" for="type_out">Livraison</label>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="type" id="type_in" value="IN" {{ 'checked' if wiz.get('type') == 'IN' else '' }} required>
+                <label class="form-check-label" for="type_in">Reprise</label>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="type" id="type_def" value="DEFECT" {{ 'checked' if wiz.get('type') == 'DEFECT' else '' }} required>
+                <label class="form-check-label" for="type_def">Défectueux</label>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="type" id="type_full" value="FULL" {{ 'checked' if wiz.get('type') == 'FULL' else '' }} required>
+                <label class="form-check-label" for="type_full">Retour plein</label>
+              </div>
+            </div>
+          </div>
+        </div>
 
-{% elif step == 4 %}
-<form method="post" class="card p-3">
-  <div class="mb-3">
-    <label class="form-label">Produits</label>
-    <div id="lines" class="d-flex flex-column gap-2">
-      <div class="line d-flex gap-2">
-        <select name="variant_id" class="form-select" required>
-          {% for v in variants %}
-            <option value="{{ v.id }}">{{ v.product.name }} — {{ v.size_l }} L</option>
-          {% endfor %}
-        </select>
-        <input type="number" name="qty" class="form-control" min="1" step="1" placeholder="Qté" required>
-        <input type="number" name="unit_price_ttc" class="form-control" step="0.01" min="0" placeholder="PU TTC (opt)">
-        <input type="number" name="deposit_per_keg" class="form-control" step="0.01" min="0" placeholder="Consigne/fût (opt)">
+        <div>
+          <label class="form-label">Date</label>
+          <input type="date" name="date" class="form-control" value="{{ wiz.get('date') or '' }}">
+        </div>
+
+        <div class="d-flex gap-2">
+          <button class="btn btn-primary">Continuer</button>
+        </div>
+      </form>
+
+    {% elif step == 2 %}
+      <!-- ÉTAPE 2 : CHOIX CLIENT -->
+      <form method="post" class="vstack gap-3">
+        <input type="hidden" name="step" value="2">
+
+        <div>
+          <label class="form-label">Client</label>
+          <select name="client_id" class="form-select" required>
+            <option value="" disabled {{ 'selected' if not wiz.get('client_id') else '' }}>Sélectionner…</option>
+            {% for c in clients %}
+              <option value="{{ c.id }}" {{ 'selected' if wiz.get('client_id') == c.id else '' }}>{{ c.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="d-flex gap-2">
+          <a class="btn btn-outline-secondary" href="{{ url_for('movement_wizard', step=1) }}">← Retour</a>
+          <button class="btn btn-primary">Continuer</button>
+        </div>
+      </form>
+
+    {% elif step == 3 %}
+      <!-- ÉTAPE 3 : RÉCAP -->
+      <div class="mb-3">
+        <div class="row">
+          <div class="col-12 col-md-6">
+            <div><strong>Type :</strong>
+              {{ {'OUT':'Livraison','IN':'Reprise','DEFECT':'Défectueux','FULL':'Retour plein'}[wiz.get('type')] if wiz.get('type') in ['OUT','IN','DEFECT','FULL'] else wiz.get('type') }}
+            </div>
+            <div><strong>Date :</strong> {{ wiz.get('date') or 'aujourd’hui' }}</div>
+          </div>
+          <div class="col-12 col-md-6">
+            <div><strong>Client :</strong>
+              {% if wiz.get('client_id') %}
+                {% set c = (clients|selectattr('id','equalto', wiz.get('client_id'))|list|first) if false else None %}
+                ID {{ wiz.get('client_id') }}
+              {% else %}
+                —
+              {% endif %}
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
-    <div class="mt-2">
-      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addLine()">+ Ajouter une ligne</button>
-    </div>
-  </div>
 
-  <div class="mb-3">
-    <label class="form-label">Matériel prêté / repris</label>
-    <div class="row g-2">
-      <div class="col-6 col-md-3">
-        <label class="form-label">Tireuse</label>
-        <input type="number" name="eq_tireuse" class="form-control" min="0" step="1" value="0">
-      </div>
-      <div class="col-6 col-md-3">
-        <label class="form-label">CO₂</label>
-        <input type="number" name="eq_co2" class="form-control" min="0" step="1" value="0">
-      </div>
-      <div class="col-6 col-md-3">
-        <label class="form-label">Comptoir</label>
-        <input type="number" name="eq_comptoir" class="form-control" min="0" step="1" value="0">
-      </div>
-      <div class="col-6 col-md-3">
-        <label class="form-label">Tonnelle</label>
-        <input type="number" name="eq_tonnelle" class="form-control" min="0" step="1" value="0">
-      </div>
-    </div>
-    <div class="form-text">Les quantités saisies seront intégrées automatiquement au suivi de matériel (onglet et accueil). Pour un commentaire libre, tu peux toujours ajouter une note.</div>
-  </div>
-  <div class="mb-3">
-    <label class="form-label">Note (optionnel)</label>
-    <textarea name="notes" class="form-control" rows="2" placeholder="Commentaire interne"></textarea>
-  </div>
+      <form method="post">
+        <input type="hidden" name="step" value="3">
+        <div class="d-flex gap-2">
+          <a class="btn btn-outline-secondary" href="{{ url_for('movement_wizard', step=2) }}">← Retour</a>
+          <button class="btn btn-primary">Passer à la saisie</button>
+        </div>
+      </form>
 
-  <div class="d-flex gap-2">
-    <button name="action" value="prev" class="btn btn-outline-secondary">Précédent</button>
-    <button name="action" value="next" class="btn btn-primary">Enregistrer</button>
+    {% elif step == 4 %}
+      <!-- ÉTAPE 4 : SAISIE LIGNES -->
+      <form method="post" id="lines-form" class="vstack gap-3">
+        <input type="hidden" name="step" value="4">
+        <input type="hidden" name="action" value="save">
+
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="min-width: 240px;">Produit</th>
+                <th class="text-end" style="width: 120px;">Qté</th>
+                <th class="text-end" style="width: 140px;">Prix TTC (/fût)</th>
+                <th class="text-end" style="width: 140px;">Consigne (/fût)</th>
+                <th>—</th>
+              </tr>
+            </thead>
+            <tbody id="lines-body">
+              <tr class="line">
+                <td>
+                  <select name="variant_id" class="form-select" required>
+                    <option value="" disabled selected>Choisir…</option>
+                    {% for v in variants %}
+                      <option value="{{ v.id }}">{{ v.product.name }} — {{ v.size_l }} L</option>
+                    {% endfor %}
+                  </select>
+                </td>
+                <td><input type="number" name="qty" class="form-control text-end" min="1" step="1" value="1" required></td>
+                <td><input type="number" name="unit_price_ttc" class="form-control text-end" step="0.01" placeholder="auto"></td>
+                <td><input type="number" name="deposit_per_keg" class="form-control text-end" step="0.01" value="{{ 30 if wiz.get('type') in ['OUT','IN'] else '' }}" placeholder="30"></td>
+                <td>
+                  <button class="btn btn-sm btn-outline-danger" type="button" onclick="removeLine(this)">Supprimer</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Matériel prêté / repris -->
+        <div class="row g-2">
+          <div class="col-6 col-md-3">
+            <label class="form-label">Tireuse</label>
+            <input type="number" name="eq_tireuse" class="form-control" min="0" step="1" value="0">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label">CO₂</label>
+            <input type="number" name="eq_co2" class="form-control" min="0" step="1" value="0">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label">Comptoir</label>
+            <input type="number" name="eq_comptoir" class="form-control" min="0" step="1" value="0">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label">Tonnelle</label>
+            <input type="number" name="eq_tonnelle" class="form-control" min="0" step="1" value="0">
+          </div>
+        </div>
+
+        <div>
+          <label class="form-label">Notes (optionnel)</label>
+          <textarea name="notes" class="form-control" rows="2" placeholder="Infos complémentaires"></textarea>
+        </div>
+
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-secondary" type="button" onclick="addLine()">+ Ajouter une ligne</button>
+          <div class="ms-auto"></div>
+          <a class="btn btn-outline-secondary" href="{{ url_for('movement_wizard', step=3) }}">← Retour</a>
+          <button class="btn btn-success">Enregistrer</button>
+        </div>
+      </form>
+
+      <script>
+        function addLine() {
+          const body = document.getElementById('lines-body');
+          const tpl = body.querySelector('tr.line');
+          const clone = tpl.cloneNode(true);
+          // reset values
+          clone.querySelectorAll('input').forEach(i => {
+            if (i.name === 'qty') i.value = 1;
+            else i.value = '';
+          });
+          clone.querySelectorAll('select').forEach(s => { s.selectedIndex = 0; });
+          body.appendChild(clone);
+        }
+        function removeLine(btn) {
+          const row = btn.closest('tr');
+          const body = document.getElementById('lines-body');
+          if (body.querySelectorAll('tr.line').length > 1) {
+            row.remove();
+          }
+        }
+      </script>
+
+    {% else %}
+      <div class="alert alert-warning">Étape inconnue. <a href="{{ url_for('movement_wizard', step=1) }}">Recommencer</a></div>
+    {% endif %}
+
   </div>
-</form>
-
-<script>
-function addLine(){
-  const tpl = document.querySelector('.line').cloneNode(true);
-  tpl.querySelectorAll('input').forEach(i=>i.value='');
-  document.getElementById('lines').appendChild(tpl);
-}
-</script>
-{% endif %}
-
+</div>
 {% endblock %}
