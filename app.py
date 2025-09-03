@@ -108,7 +108,7 @@ def create_app():
         return render_template(
             "client_detail.html",
             client=c,
-            view=view,  # on passe aussi 'view' pour compat maximale
+            view=view,
             movements=movements,
             beer_billed_cum=view["beer_eur"],
             deposit_in_play=view["deposit_eur"],
@@ -128,7 +128,7 @@ def create_app():
         )
         return render_template("catalog.html", variants=variants)
 
-    # ------------- Mouvements -------------
+    # ------------- Mouvements (Saisie) -------------
     @app.route("/movement/new", methods=["GET"])
     def movement_new():
         return redirect(url_for("movement_wizard"))
@@ -153,19 +153,18 @@ def create_app():
                 clients = Client.query.order_by(Client.name.asc()).all()
                 return render_template("movement_wizard.html", step=2, wiz=wiz, clients=clients)
             elif step == 3:
-                # ✅ On passe explicitement le client courant pour l’affichage
                 current_client = None
                 if wiz.get("client_id"):
                     current_client = Client.query.get(wiz["client_id"])
                 return render_template("movement_wizard.html", step=3, wiz=wiz, current_client=current_client)
             elif step == 4:
-                # Filtrage des variantes si Reprise: uniquement celles encore présentes chez le client
                 base_q = (
                     db.session.query(Variant)
                     .join(Product, Variant.product_id == Product.id)
                     .filter(~Product.name.ilike("%ecocup%"), ~Product.name.ilike("%gobelet%"))
                     .order_by(Product.name, Variant.size_l)
                 )
+                # Si REPRISE : n’autoriser que les références encore “chez le client”
                 if wiz.get("type") == "IN" and wiz.get("client_id"):
                     open_map = U.get_open_kegs_by_variant(wiz["client_id"])
                     allowed_ids = [vid for vid, openq in open_map.items() if openq > 0]
@@ -226,7 +225,7 @@ def create_app():
             deposits = request.form.getlist("deposit_per_keg")
             notes = request.form.get("notes") or None
 
-            # Matériel structuré (optionnel)
+            # Matériel structuré (optionnel) => intégré en note
             t = request.form.get("eq_tireuse", type=int)
             c2 = request.form.get("eq_co2", type=int)
             cp = request.form.get("eq_comptoir", type=int)
@@ -244,34 +243,59 @@ def create_app():
 
             # --------- VALIDATION REPRISE ---------
             open_map = U.get_open_kegs_by_variant(client_id) if mtype == "IN" else {}
-            violations = []  # (product_label, max_allowed)
 
             created = 0
+            violations = []  # (label, maxq)
+
             for i, vid in enumerate(variant_ids):
                 try:
                     vid_int = int(vid)
+                except Exception:
+                    # Champ vide ou choix spécial, on ignore cette ligne
+                    continue
+
+                try:
                     qty_int = int(qtys[i]) if i < len(qtys) else 0
-                    if qty_int <= 0:
-                        continue
+                except Exception:
+                    qty_int = 0
 
-                    v = Variant.query.get(vid_int)
-                    up = float(unit_prices[i]) if i < len(unit_prices) and unit_prices[i] else None
-                    dep = float(deposits[i]) if i < len(deposits) and deposits[i] else None
+                up = None
+                dep = None
+                if i < len(unit_prices) and unit_prices[i]:
+                    try:
+                        up = float(unit_prices[i])
+                    except Exception:
+                        up = None
+                if i < len(deposits) and deposits[i]:
+                    try:
+                        dep = float(deposits[i])
+                    except Exception:
+                        dep = None
 
-                    if up is None and v and v.price_ttc is not None:
+                v = Variant.query.get(vid_int)
+                if not v:
+                    continue
+
+                # --------- MATÉRIEL SEUL : forcer toutes les valeurs à 0 ---------
+                pname = (v.product.name if v and v.product else "") or ""
+                is_equipment_only = "matériel" in pname.lower() and "seul" in pname.lower()
+                if is_equipment_only:
+                    qty_int = 0
+                    up = 0.0
+                    dep = 0.0
+                else:
+                    if up is None and v.price_ttc is not None:
                         up = v.price_ttc
                     if dep is None:
                         dep = U.DEFAULT_DEPOSIT  # 30.0
 
-                    # Reprise: vérifier solde chez le client
+                    # Reprise: vérifier solde chez le client (seulement pour de la bière)
                     if mtype == "IN":
                         open_q = int(open_map.get(vid_int, 0))
                         if open_q <= 0 or qty_int > open_q:
                             label = f"{v.product.name} — {v.size_l} L"
                             violations.append((label, open_q))
                             continue  # n'enregistre pas cette ligne
-                except Exception:
-                    continue
 
                 mv = Movement(
                     client_id=client_id,
@@ -284,7 +308,10 @@ def create_app():
                     created_at=created_at,
                 )
                 db.session.add(mv)
-                U.apply_inventory_effect(mtype, vid_int, qty_int)
+
+                # Effet stock seulement si qty > 0 (les lignes “matériel seul” restent neutres)
+                if qty_int > 0:
+                    U.apply_inventory_effect(mtype, vid_int, qty_int)
                 created += 1
 
             if violations:
