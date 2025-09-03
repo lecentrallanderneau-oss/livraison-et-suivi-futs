@@ -18,24 +18,45 @@
           <th>Produit</th>
           <th class="text-center" style="width:100px;">Taille</th>
           <th class="text-end" style="width:140px;">Prix TTC</th>
-          <th class="text-end" style="width:140px;">Stock (fûts)</th>
-          <th class="text-end" style="width:140px;">Seuil mini</th>
+          <th class="text-end" style="width:160px;">Stock (fûts)</th>
+          <th class="text-end" style="width:160px;">Seuil mini</th>
         </tr>
       </thead>
       <tbody>
-        {% for it in rows %}
+        {% if rows and rows|length > 0 %}
+          {% for it in rows %}
+            {% set v = it.variant %}
+            <tr>
+              <td>{{ (v.product.name if v and v.product else '—') }}</td>
+              <td class="text-center">{{ (v.size_l if v else '—') }} L</td>
+              <td class="text-end">
+                {% if v and v.price_ttc is not none %}
+                  {{ '%.2f'|format(v.price_ttc) }} €
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td>
+                <input type="number"
+                       name="qty_{{ v.id if v else 0 }}"
+                       class="form-control text-end"
+                       min="0" step="1"
+                       value="{{ (it.inventory.qty if it.inventory else 0) }}">
+              </td>
+              <td>
+                <input type="number"
+                       name="min_{{ v.id if v else 0 }}"
+                       class="form-control text-end"
+                       min="0" step="1"
+                       value="{{ (it.rule.min_qty if it.rule else 0) }}">
+              </td>
+            </tr>
+          {% endfor %}
+        {% else %}
           <tr>
-            <td>{{ it.variant.product.name }}</td>
-            <td class="text-center">{{ it.variant.size_l }} L</td>
-            <td class="text-end">{{ it.variant.price_ttc is not none and ('%.2f'|format(it.variant.price_ttc)) ~ ' €' or '—' }}</td>
-            <td>
-              <input type="number" name="qty_{{ it.variant.id }}" class="form-control text-end" min="0" step="1" value="{{ it.inventory.qty or 0 }}">
-            </td>
-            <td>
-              <input type="number" name="min_{{ it.variant.id }}" class="form-control text-end" min="0" step="1" value="{{ it.rule and it.rule.min_qty or 0 }}">
-            </td>
+            <td colspan="5" class="text-muted text-center">Aucune référence trouvée.</td>
           </tr>
-        {% endfor %}
+        {% endif %}
       </tbody>
     </table>
   </div>
