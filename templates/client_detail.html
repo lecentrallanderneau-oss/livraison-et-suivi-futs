@@ -1,87 +1,71 @@
 {% extends "base.html" %}
 {% import "_macros.html" as ui %}
-{% block title %}{{ client.name }} · Gestion fûts{% endblock %}
+{% block title %}{{ client.name }}{% endblock %}
+
 {% block content %}
-<div class="d-flex align-items-center justify-content-between">
+<div class="d-flex justify-content-between align-items-center mb-3">
   <h1 class="h3 mb-0">{{ client.name }}</h1>
-  <a class="btn btn-primary" href="{{ url_for('movement_wizard', client_id=client.id) }}">Nouveau mouvement</a>
+  <div class="d-flex gap-2">
+    <a class="btn btn-primary" href="{{ url_for('movement_wizard', step=1, client_id=client.id) }}">+ Livraison / Reprise</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('clients') }}">← Retour clients</a>
+  </div>
 </div>
-<hr>
 
-<div class="row g-3">
-  <!-- Colonne récap -->
-  <div class="col-md-4">
-    <div class="card mb-3">
-      <div class="card-header">Récapitulatif</div>
-      <div class="card-body">
-        <div class="mb-2">
-          <div class="muted small">Bière facturée cumulée</div>
-          <div class="fs-5 fw-bold">{{ '%.2f'|format(beer_billed_cum or 0) }} €</div>
-        </div>
-        <div class="mb-2">
-          <div class="muted small">Consigne en cours</div>
-          <div class="fs-5 fw-bold">{{ '%.2f'|format(deposit_in_play or 0) }} €</div>
-        </div>
-        <div class="mb-2">
-          <div class="muted small">Litres livrés cumulés</div>
-          <div class="fs-5 fw-bold">{{ delivered_qty_cum or 0 }} L</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header">Matériel prêté (net)</div>
-      <div class="card-body">
-        {{ ui.equipment_stats(equipment_totals) }}
-      </div>
-    </div>
+<div class="row g-3 mb-3">
+  <div class="col-12 col-md-3">
+    {{ ui.stat_card("Fûts en jeu", view.kegs if view is defined else (view_kegs if view_kegs is defined else 0)) }}
   </div>
-
-  <!-- Colonne principale -->
-  <div class="col-md-8">
-    <div class="card">
-      <div class="card-header d-flex align-items-center justify-content-between">
-        <span>Historique des mouvements</span>
-        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('movement_wizard', client_id=client.id) }}">+ Nouveau</a>
-      </div>
-      <div class="card-body p-0">
-        <table class="table table-sm mb-0 align-middle">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Type</th>
-              <th>Produit</th>
-              <th class="text-end">L</th>
-              <th class="text-end">Qté</th>
-              <th class="text-end">PU TTC (€)</th>
-              <th class="text-end">Cons./fût (€)</th>
-              <th>Note</th>
-              <th class="text-end">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for m in movements %}
-              <tr>
-                <td class="text-nowrap">{{ m.created_at }}</td>
-                <td>{{ {'OUT':'Livraison','IN':'Reprise','DEFECT':'Défectueux','FULL':'Retour plein'}[m.type] if m.type in ['OUT','IN','DEFECT','FULL'] else m.type }}</td>
-                <td>{{ m.variant.product.name }}</td>
-                <td class="text-end">{{ m.variant.size_l }}</td>
-                <td class="text-end">{{ m.qty }}</td>
-                <td class="text-end">{{ m.unit_price_ttc is not none and ('%.2f'|format(m.unit_price_ttc)) or '—' }}</td>
-                <td class="text-end">{{ m.deposit_per_keg is not none and ('%.2f'|format(m.deposit_per_keg)) or '—' }}</td>
-                <td>{{ m.notes or '—' }}</td>
-                <td class="text-end">
-                  <a class="btn btn-sm btn-outline-danger" href="{{ url_for('movement_confirm_delete', movement_id=m.id) }}">Supprimer</a>
-                </td>
-              </tr>
-            {% else %}
-              <tr><td colspan="9" class="text-center text-muted">Aucun mouvement.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
-
+  <div class="col-12 col-md-3">
+    {{ ui.stat_card("Bière facturée (cumul)", beer_billed_cum|eur) }}
   </div>
+  <div class="col-12 col-md-3">
+    {{ ui.stat_card("Consigne en jeu", deposit_in_play|signed_eur) }}
+  </div>
+  <div class="col-12 col-md-3">
+    {{ ui.stat_card("Litres livrés (cumul)", (liters_out_cum or litres_out_cum or 0)) }}
+  </div>
+</div>
+
+<h2 class="h5 mt-4 mb-2">Matériel en cours de prêt chez le client</h2>
+{{ ui.equipment_stats(equipment_totals) }}
+
+<h2 class="h5 mt-4 mb-2">Historique</h2>
+<div class="table-responsive">
+  <table class="table table-sm align-middle">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Type</th>
+        <th>Produit</th>
+        <th class="text-end">Qté</th>
+        <th class="text-end">Taille</th>
+        <th class="text-end">Prix TTC</th>
+        <th class="text-end">Consigne</th>
+        <th>Notes</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in movements %}
+      <tr>
+        <td>{{ m.created_at|dt }}</td>
+        <td>
+          {{ {'OUT':'Livraison','IN':'Reprise','DEFECT':'Défectueux','FULL':'Retour plein'}[m.type] if m.type in ['OUT','IN','DEFECT','FULL'] else m.type }}
+        </td>
+        <td>{{ m.variant.product.name }} — {{ m.variant.size_l }} L</td>
+        <td class="text-end">{{ m.qty }}</td>
+        <td class="text-end">{{ m.variant.size_l }} L</td>
+        <td class="text-end">{{ m.unit_price_ttc|eur }}</td>
+        <td class="text-end">{{ (m.deposit_per_keg if m.deposit_per_keg is not none else 30)|eur }}</td>
+        <td>{{ m.notes or '' }}</td>
+        <td class="text-end">
+          <a class="btn btn-sm btn-outline-danger" href="{{ url_for('movement_confirm_delete', movement_id=m.id) }}">Supprimer</a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9" class="text-muted">Aucun mouvement pour l’instant.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
 {% endblock %}
