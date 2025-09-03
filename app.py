@@ -113,13 +113,21 @@ def liters_for(mtype, size_l, qty):
 
 def compute_cum_beer_billed(client_id: int):
     """Total bière facturée cumulée (tous OUT de variants > 0L) - (IN/DEFECT)."""
-    out_sum = db.session.query(func.coalesce(func.sum(case((and_(Movement.type == 'OUT', Variant.size_l > 0), Movement.qty * Variant.price_ttc), else_=0))),) \
-        .join(Variant, Variant.id == Movement.variant_id) \
-        .filter(Movement.client_id == client_id).scalar()
+    out_sum = db.session.query(
+        func.coalesce(func.sum(case(
+            (and_(Movement.type == 'OUT', Variant.size_l > 0), Movement.qty * Variant.price_ttc),
+            else_=0
+        )), 0)
+    ).join(Variant, Variant.id == Movement.variant_id) \
+     .filter(Movement.client_id == client_id).scalar()
 
-    in_def_sum = db.session.query(func.coalesce(func.sum(case((and_(or_(Movement.type == 'IN', Movement.type == 'DEFECT'), Variant.size_l > 0), Movement.qty * Variant.price_ttc), else_=0))),) \
-        .join(Variant, Variant.id == Movement.variant_id) \
-        .filter(Movement.client_id == client_id).scalar()
+    in_def_sum = db.session.query(
+        func.coalesce(func.sum(case(
+            (and_(or_(Movement.type == 'IN', Movement.type == 'DEFECT'), Variant.size_l > 0), Movement.qty * Variant.price_ttc),
+            else_=0
+        )), 0)
+    ).join(Variant, Variant.id == Movement.variant_id) \
+     .filter(Movement.client_id == client_id).scalar()
 
     out_sum = float(out_sum or 0.0)
     in_def_sum = float(in_def_sum or 0.0)
@@ -135,7 +143,8 @@ def sum_equipment_for_client(client_id: int):
         for k in EQ_KEYS:
             totals[k] += sign * int(eq.get(k, 0) or 0)
     for k in list(totals.keys()):
-        if totals[k] < 0: totals[k] = 0
+        if totals[k] < 0:
+            totals[k] = 0
     return totals
 
 def pack_equipment(human_notes, eq_dict):
@@ -203,17 +212,63 @@ def create_app():
         ensure_data_consistency()
 
     @app.errorhandler(404)
-    def not_found(e): return render_template('404.html'), 404
+    def not_found(e): 
+        return render_template('404.html'), 404
 
     @app.errorhandler(500)
-    def server_err(e): return render_template('500.html'), 500
+    def server_err(e): 
+        return render_template('500.html'), 500
 
     # --------- Routes ----------
 
     @app.route('/')
     def index():
+        # Récap par client (badges + dates + matériel), sans gobelets
         clients = Client.query.order_by(Client.name).all()
-        return render_template('index.html', clients=clients)
+        cards = []
+
+        for c in clients:
+            # total fûts livrés cumulés (OUT uniquement, variants > 0L)
+            total_kegs_delivered = db.session.query(
+                func.coalesce(func.sum(case(
+                    (and_(Movement.type == 'OUT', Variant.size_l > 0), Movement.qty),
+                    else_=0
+                )), 0)
+            ).join(Variant, Variant.id == Movement.variant_id) \
+             .filter(Movement.client_id == c.id).scalar() or 0
+
+            # bière facturée cumulée (en €)
+            beer_eur = compute_cum_beer_billed(c.id)
+
+            # consignes en cours (somme OUT de qty * deposit_per_keg)
+            deposit_in_play = db.session.query(
+                func.coalesce(func.sum(case(
+                    (Movement.type == 'OUT', Movement.qty * (Movement.deposit_per_keg or 0.0)),
+                    else_=0
+                )), 0.0)
+            ).filter(Movement.client_id == c.id).scalar() or 0.0
+
+            # dates
+            last_delivery_at = db.session.query(func.max(Movement.created_at)) \
+                .filter(Movement.client_id == c.id, Movement.type == 'OUT').scalar()
+            last_pickup_at = db.session.query(func.max(Movement.created_at)) \
+                .filter(Movement.client_id == c.id, or_(Movement.type == 'IN', Movement.type == 'DEFECT')).scalar()
+
+            # matériel total
+            eq_totals = sum_equipment_for_client(c.id)
+
+            cards.append({
+                "id": c.id,
+                "name": c.name,
+                "kegs": int(total_kegs_delivered),
+                "beer_eur": float(beer_eur or 0),
+                "deposit_eur": float(deposit_in_play or 0),
+                "last_out": last_delivery_at,
+                "last_in": last_pickup_at,
+                "eq": eq_totals
+            })
+
+        return render_template('index.html', cards=cards)
 
     @app.route('/clients')
     def clients():
@@ -275,9 +330,12 @@ def create_app():
             })
 
         beer_billed_cum = compute_cum_beer_billed(client_id)
-        deposit_in_play = db.session.query(func.coalesce(func.sum(case((Movement.type == 'OUT', Movement.qty * (Movement.deposit_per_keg or 0.0)),
-                                                                       else_=0))),).filter(Movement.client_id == client_id).scalar()
-        deposit_in_play = float(deposit_in_play or 0.0)
+        deposit_in_play = db.session.query(
+            func.coalesce(func.sum(case(
+                (Movement.type == 'OUT', Movement.qty * (Movement.deposit_per_keg or 0.0)),
+                else_=0
+            )), 0.0)
+        ).filter(Movement.client_id == client_id).scalar() or 0.0
 
         equipment_totals = sum_equipment_for_client(client_id)
         last_delivery_at = db.session.query(func.max(Movement.created_at)) \
@@ -326,7 +384,7 @@ def create_app():
             if any(v != 0 for v in eq.values()):
                 notes = pack_equipment(human_notes, eq)
 
-            # --- Validations anti-négatif pour fûts et matériel ---
+            # --- Validations basiques ---
             if qty <= 0:
                 flash("Quantité invalide.", "danger")
                 return redirect(url_for('movement_new', client_id=client_id))
