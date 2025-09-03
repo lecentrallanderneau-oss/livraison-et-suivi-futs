@@ -19,8 +19,7 @@ from models import (
 # -------------
 def _ensure_seed_clients():
     """
-    Ajoute quelques clients si la table est vide.
-    (Ne modifie pas de données existantes.)
+    Ajoute quelques clients si la table est vide (ne modifie pas l'existant).
     """
     if Client.query.count() == 0:
         for n in ["Landerneau Football Club", "Ville de Landerneau", "Association des Commerçants"]:
@@ -50,7 +49,7 @@ def create_app():
     def index():
         clients = Client.query.order_by(Client.name.asc()).all()
 
-        # IMPORTANT : on n'utilise AUCUNE colonne fragile de variants (name/capacity_l)
+        # IMPORTANT : ne lit AUCUNE colonne fragile de variants (name/capacity_l)
         low_stock = (
             db.session.query(
                 Product.name.label("product_name"),
@@ -121,6 +120,18 @@ def create_app():
     @app.route("/stock")
     def stock():
         return redirect(url_for("index"))
+
+    # --------------------------------
+    # Wizard mouvements (attendu par base.html)
+    # --------------------------------
+    @app.route("/movement/wizard")
+    @app.route("/wizard")
+    def movement_wizard():
+        """
+        Page placeholder pour satisfaire base.html.
+        Aucun impact sur données/visuel existants.
+        """
+        return render_template("movement_wizard.html")
 
     # ------------------------------------------------
     # Éco-cups — saisie + historique
