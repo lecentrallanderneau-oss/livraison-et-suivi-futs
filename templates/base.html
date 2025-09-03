@@ -12,25 +12,26 @@
     .chip-gray { background:#e2e3e5; color:#343a40; }
     .chip-cyan { background:#d1f4ff; color:#05668d; }
     .chip-amber { background:#ffe7b3; color:#8a5a00; }
-    .eq-pill { background:#e9ecef; color:#495057; border-radius:999px; padding:.1rem .45rem; font-size:.8rem; margin-right:.25rem; }
     .card-list { background:white; border:1px solid #e9ecef; border-radius:12px; overflow:hidden; }
-    .card-list .row-item { padding:1rem 1.25rem; border-bottom:1px solid #f1f3f5; }
-    .card-list .row-item:last-child { border-bottom:none; }
-    .client-link { font-weight:700; text-decoration:none; }
+    .row-item { padding:1rem 1rem; border-top:1px solid #f1f3f5; }
+    .row-item:first-child { border-top:0; }
+    .client-link { font-weight:600; text-decoration:none; color:#212529; }
     .client-link:hover { text-decoration:underline; }
   </style>
 </head>
 <body>
-<nav class="navbar navbar-expand-lg bg-dark navbar-dark fixed-top">
-  <div class="container-fluid">
-    <a class="navbar-brand d-flex align-items-center gap-2" href="{{ url_for('index') }}">
-      <span style="font-size:1.25rem">🍺</span> <span>Fûts</span>
-    </a>
-    <div class="collapse navbar-collapse">
+
+<nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top border-bottom">
+  <div class="container">
+    <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">🍺 Gestion fûts</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div id="nav" class="collapse navbar-collapse">
       <ul class="navbar-nav me-auto">
         <li class="nav-item"><a class="nav-link" href="{{ url_for('clients') }}">Clients</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('catalog') }}">Catalogue</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('movement_new') }}">+ Livraisons / Reprise</a></li>
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('stock') }}">Stock bar</a></li>
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('movement_wizard') }}">+ Mouvement (pas à pas)</a></li>
       </ul>
     </div>
   </div>
@@ -39,12 +40,9 @@
 <main class="container">
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
-      <div class="mt-2">
+      <div class="my-2">
         {% for cat, msg in messages %}
-          <div class="alert alert-{{ 'warning' if cat=='danger' else cat }} alert-dismissible fade show" role="alert">
-            {{ msg }}
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-          </div>
+          <div class="alert alert-{{ 'warning' if cat=='warning' else cat }} mb-2">{{ msg }}</div>
         {% endfor %}
       </div>
     {% endif %}
