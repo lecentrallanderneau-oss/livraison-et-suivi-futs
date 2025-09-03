@@ -2,6 +2,8 @@ import os
 from datetime import datetime, date, time
 from flask import Flask, render_template, request, redirect, url_for, flash, session, Response
 
+from sqlalchemy import func
+
 from models import db, Client, Product, Variant, Movement
 from seed import seed_if_empty
 import utils as U
@@ -45,6 +47,26 @@ def create_app():
             return "-"
         s = "+" if v >= 0 else "−"
         return f"{s}{abs(v):,.2f} €".replace(",", " ").replace(".", ",")
+
+    # ----------------- Helpers internes -----------------
+    def _open_kegs_by_variant(client_id: int):
+        """
+        Retourne un dict {variant_id: qty_chez_client} = OUT - (IN + DEFECT + FULL)
+        """
+        out_rows = dict(
+            db.session.query(Movement.variant_id, func.coalesce(func.sum(Movement.qty), 0))
+            .filter(Movement.client_id == client_id, Movement.type == "OUT")
+            .group_by(Movement.variant_id)
+            .all()
+        )
+        back_rows = dict(
+            db.session.query(Movement.variant_id, func.coalesce(func.sum(Movement.qty), 0))
+            .filter(Movement.client_id == client_id, Movement.type.in_(["IN", "DEFECT", "FULL"]))
+            .group_by(Movement.variant_id)
+            .all()
+        )
+        all_vids = set(out_rows) | set(back_rows)
+        return {vid: int(out_rows.get(vid, 0)) - int(back_rows.get(vid, 0)) for vid in all_vids}
 
     # ----------------- Routes -----------------
     @app.route("/")
@@ -148,7 +170,9 @@ def create_app():
         if request.method == "GET":
             step = int(request.args.get("step", 1))
             if step == 1:
-                return render_template("movement_wizard.html", step=1, wiz=wiz)
+                # Autofill date du jour pour l'input
+                today_iso = date.today().isoformat()
+                return render_template("movement_wizard.html", step=1, wiz=wiz, today_iso=today_iso)
             elif step == 2:
                 clients = Client.query.order_by(Client.name.asc()).all()
                 return render_template("movement_wizard.html", step=2, wiz=wiz, clients=clients)
@@ -166,7 +190,7 @@ def create_app():
                 )
                 # Si REPRISE : n’autoriser que les références encore “chez le client”
                 if wiz.get("type") == "IN" and wiz.get("client_id"):
-                    open_map = U.get_open_kegs_by_variant(wiz["client_id"])
+                    open_map = _open_kegs_by_variant(wiz["client_id"])
                     allowed_ids = [vid for vid, openq in open_map.items() if openq > 0]
                     if allowed_ids:
                         base_q = base_q.filter(Variant.id.in_(allowed_ids))
@@ -208,7 +232,7 @@ def create_app():
                 flash("Informations incomplètes.", "warning")
                 return redirect(url_for("movement_wizard", step=1))
 
-            # Date finale
+            # Date finale : si vide -> date de saisie
             if wiz.get("date"):
                 try:
                     y, m_, d2 = [int(x) for x in wiz["date"].split("-")]
@@ -242,7 +266,7 @@ def create_app():
             client_id = wiz["client_id"]
 
             # --------- VALIDATION REPRISE ---------
-            open_map = U.get_open_kegs_by_variant(client_id) if mtype == "IN" else {}
+            open_map = _open_kegs_by_variant(client_id) if mtype == "IN" else {}
 
             created = 0
             violations = []  # (label, maxq)
@@ -339,17 +363,47 @@ def create_app():
     @app.route("/movement/<int:movement_id>/delete", methods=["POST"])
     def movement_delete(movement_id):
         m = Movement.query.get_or_404(movement_id)
-        U.apply_inventory_effect_reverse(m.type, m.variant_id, m.qty or 0)
+        U.revert_inventory_effect(m.type, m.variant_id, m.qty or 0)
         client_id = m.client_id
         db.session.delete(m)
         db.session.commit()
         flash("Mouvement supprimé.", "success")
         return redirect(url_for("client_detail", client_id=client_id))
 
-    @app.route("/stock")
+    # ---- Stock ----
+    @app.route("/stock", methods=["GET", "POST"])
     def stock():
+        if request.method == "POST":
+            changed = 0
+            # Mises à jour qty_*, min_*
+            for key, val in request.form.items():
+                if key.startswith("qty_"):
+                    try:
+                        vid = int(key.split("_", 1)[1])
+                        qty = int(val or 0)
+                    except Exception:
+                        continue
+                    inv = U.get_or_create_inventory(vid)
+                    if inv.qty != qty:
+                        inv.qty = qty
+                        changed += 1
+                elif key.startswith("min_"):
+                    try:
+                        vid = int(key.split("_", 1)[1])
+                        minq = int(val or 0)
+                    except Exception:
+                        continue
+                    rule = U.get_or_create_reorder_rule(vid)
+                    if rule.min_qty != minq:
+                        rule.min_qty = minq
+                        changed += 1
+            db.session.commit()
+            flash(f"Inventaire enregistré ({changed} mise(s) à jour).", "success")
+            return redirect(url_for("stock"))
+
         rows = U.get_stock_items()
-        return render_template("stock.html", rows=rows)
+        alerts = U.compute_reorder_alerts()
+        return render_template("stock.html", rows=rows, alerts=alerts)
 
     @app.route("/product/<int:variant_id>")
     def product_variant(variant_id):
