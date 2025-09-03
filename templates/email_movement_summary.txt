@@ -1,0 +1,15 @@
+{{ type_label }} – {{ client.name }}
+Date : {{ created_at|dt }}
+
+Détail :
+{% for it in items %}
+- {{ it.label }}{% if it.equipment_only %} (matériel seul){% else %} : {{ it.qty }} uni.{% if it.unit_price %} × {{ '%.2f'|format(it.unit_price) }} € TTC{% endif %}{% if it.deposit %} ; consigne {{ '%.2f'|format(it.deposit) }} € / fût{% endif %}{% endif %}
+{% endfor %}
+
+{% if notes %}Notes : {{ notes }}{% endif %}
+
+Totaux :
+- Bière TTC : {{ total_beer_eur|eur }}
+- Variation consigne : {{ total_deposit_delta|eur }}
+
+Merci pour votre confiance.

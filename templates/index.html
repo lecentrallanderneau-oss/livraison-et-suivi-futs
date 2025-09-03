@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Fûts · Accueil{% endblock %}
+{% block content %}
+
+{{ ui.alerts_list(alerts) }}
+
+<div class="d-flex align-items-center justify-content-between">
+  <h1 class="h3 mb-0">Stock par client</h1>
+  <a href="{{ url_for('movement_wizard') }}" class="btn btn-primary">+ Saisie</a>
+</div>
+<hr>
+
+<div class="card-list">
+  {% for c in cards %}
+    <div class="row-item">
+      <div class="d-flex align-items-start justify-content-between">
+        <div>
+          <a class="client-link" href="{{ url_for('client_detail', client_id=c.id) }}">{{ c.name }}</a>
+          <div class="text-muted small">
+            {% if c.last_out %}Dernière livraison : {{ c.last_out|dt }} · {% endif %}
+            {% if c.last_in %}Dernière reprise : {{ c.last_in|dt }}{% endif %}
+          </div>
+        </div>
+        <div class="text-end">
+          <div class="mb-1">
+            <span class="chip chip-gray">{{ c.kegs }} fût(s)</span>
+            <span class="chip chip-cyan">Bière facturée: {{ '%.2f'|format(c.beer_eur or 0) }} €</span>
+            <span class="chip chip-amber">Consignes: {{ '%.2f'|format(c.deposit_eur or 0) }} €</span>
+          </div>
+        </div>
+        {{ ui.equipment_badges(c.equipment) }}
+      </div>
+    </div>
+  {% else %}
+    <div class="row-item text-center text-muted">Aucun client.</div>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block title %}Saisie{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-3">Saisie</h1>
+
+<div class="card">
+  <div class="card-body">
+
+    {% if step == 1 %}
+      <!-- ÉTAPE 1 : TYPE + DATE -->
+      <form method="post" class="vstack gap-3">
+        <input type="hidden" name="step" value="1">
+
+        <div>
+          <label class="form-label">Type de mouvement</label>
+          <div class="row g-2">
+            <div class="col-6 col-md-3">
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="type" id="type_out" value="OUT" {{ 'checked' if wiz.get('type') == 'OUT' else '' }} required>
+                <label class="form-check-label" for="type_out">Livraison</label>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="type" id="type_in" value="IN" {{ 'checked' if wiz.get('type') == 'IN' else '' }} required>
+                <label class="form-check-label" for="type_in">Reprise</label>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="type" id="type_def" value="DEFECT" {{ 'checked' if wiz.get('type') == 'DEFECT' else '' }} required>
+                <label class="form-check-label" for="type_def">Défectueux</label>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="type" id="type_full" value="FULL" {{ 'checked' if wiz.get('type') == 'FULL' else '' }} required>
+                <label class="form-check-label" for="type_full">Retour plein</label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label class="form-label">Date</label>
+          <input type="date" name="date" class="form-control" value="">
+          <div class="form-text">Laissez vide pour utiliser la date de saisie.</div>
+        </div>
+
+        <div class="d-flex gap-2">
+          <button class="btn btn-primary">Continuer</button>
+        </div>
+      </form>
+
+    {% elif step == 2 %}
+      <!-- ÉTAPE 2 : CHOIX CLIENT -->
+      <form method="post" class="vstack gap-3">
+        <input type="hidden" name="step" value="2">
+
+        <div>
+          <label class="form-label">Client</label>
+          <select name="client_id" class="form-select" required>
+            <option value="" disabled {{ 'selected' if not wiz.get('client_id') else '' }}>Sélectionner…</option>
+            {% for c in clients %}
+              <option value="{{ c.id }}" {{ 'selected' if wiz.get('client_id') == c.id else '' }}>{{ c.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="d-flex gap-2">
+          <a class="btn btn-outline-secondary" href="{{ url_for('movement_wizard', step=1) }}">← Retour</a>
+          <button class="btn btn-primary">Continuer</button>
+        </div>
+      </form>
+
+    {% elif step == 3 %}
+      <!-- ÉTAPE 3 : RÉCAP -->
+      <div class="mb-3">
+        <div class="row">
+          <div class="col-12 col-md-6">
+            <div><strong>Type :</strong>
+              {{ {'OUT':'Livraison','IN':'Reprise','DEFECT':'Défectueux','FULL':'Retour plein'}[wiz.get('type')] if wiz.get('type') in ['OUT','IN','DEFECT','FULL'] else wiz.get('type') }}
+            </div>
+            <div><strong>Date :</strong> {{ wiz.get('date') or 'aujourd’hui' }}</div>
+          </div>
+          <div class="col-12 col-md-6">
+            <div><strong>Client :</strong> {{ (current_client.name if current_client else '—') }}</div>
+          </div>
+        </div>
+      </div>
+
+      <form method="post">
+        <input type="hidden" name="step" value="3">
+        <div class="d-flex gap-2">
+          <a class="btn btn-outline-secondary" href="{{ url_for('movement_wizard', step=2) }}">← Retour</a>
+          <button class="btn btn-primary">Passer à la saisie</button>
+        </div>
+      </form>
+
+    {% elif step == 4 %}
+      <!-- ÉTAPE 4 : SAISIE LIGNES -->
+      <form method="post" id="lines-form" class="vstack gap-3">
+        <input type="hidden" name="step" value="4">
+        <input type="hidden" name="action" value="save">
+
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="min-width: 260px;">Produit</th>
+                <th class="text-end" style="width: 120px;">Qté</th>
+                <th class="text-end" style="width: 140px;">Prix TTC (/fût)</th>
+                <th class="text-end" style="width: 140px;">Consigne (/fût)</th>
+                <th>—</th>
+              </tr>
+            </thead>
+            <tbody id="lines-body">
+              <tr class="line">
+                <td>
+                  <select name="variant_id" class="form-select variant-select" required>
+                    <option value="" disabled selected>Choisir…</option>
+                    {% for v in variants %}
+                      <option value="{{ v.id }}">{{ v.product.name }} — {{ v.size_l }} L</option>
+                    {% endfor %}
+                  </select>
+                  <div class="form-text">Astuce : si vous choisissez un produit nommé “Matériel seul…”, Qté, Prix et Consigne passeront à 0.</div>
+                </td>
+                <td><input type="number" name="qty" class="form-control text-end qty" min="1" step="1" value="1" required></td>
+                <td><input type="number" name="unit_price_ttc" class="form-control text-end price" step="0.01" placeholder="auto"></td>
+                <td><input type="number" name="deposit_per_keg" class="form-control text-end deposit" step="0.01" value="{{ 30 if wiz.get('type') in ['OUT','IN'] else '' }}" placeholder="30"></td>
+                <td>
+                  <button class="btn btn-sm btn-outline-danger" type="button" onclick="removeLine(this)">Supprimer</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Matériel prêté / repris -->
+        <div class="row g-2">
+          <div class="col-6 col-md-3">
+            <label class="form-label">Tireuse</label>
+            <input type="number" name="eq_tireuse" class="form-control" min="0" step="1" value="0">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label">CO₂</label>
+            <input type="number" name="eq_co2" class="form-control" min="0" step="1" value="0">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label">Comptoir</label>
+            <input type="number" name="eq_comptoir" class="form-control" min="0" step="1" value="0">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label">Tonnelle</label>
+            <input type="number" name="eq_tonnelle" class="form-control" min="0" step="1" value="0">
+          </div>
+        </div>
+
+        <div>
+          <label class="form-label">Notes (optionnel)</label>
+          <textarea name="notes" class="form-control" rows="2" placeholder="Infos complémentaires"></textarea>
+        </div>
+
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-secondary" type="button" onclick="addLine()">+ Ajouter une ligne</button>
+          <div class="ms-auto"></div>
+          <a class="btn btn-outline-secondary" href="{{ url_for('movement_wizard', step=3) }}">← Retour</a>
+          <button class="btn btn-success">Enregistrer</button>
+        </div>
+      </form>
+
+      <script>
+        function isEquipOnlyOption(selectEl) {
+          const txt = (selectEl.options[selectEl.selectedIndex]?.text || "").toLowerCase();
+          return txt.includes("matériel") && txt.includes("seul");
+        }
+        function applyEquipOnlyState(row, equipOnly) {
+          const qty = row.querySelector('.qty');
+          const price = row.querySelector('.price');
+          const deposit = row.querySelector('.deposit');
+          if (equipOnly) {
+            qty.value = 0; price.value = 0; deposit.value = 0;
+            qty.setAttribute('disabled','disabled');
+            price.setAttribute('disabled','disabled');
+            deposit.setAttribute('disabled','disabled');
+          } else {
+            qty.removeAttribute('disabled');
+            price.removeAttribute('disabled');
+            deposit.removeAttribute('disabled');
+          }
+        }
+        function bindLine(row) {
+          const select = row.querySelector('.variant-select');
+          select.addEventListener('change', function() {
+            applyEquipOnlyState(row, isEquipOnlyOption(select));
+          });
+        }
+        function addLine() {
+          const body = document.getElementById('lines-body');
+          const tpl = body.querySelector('tr.line');
+          const clone = tpl.cloneNode(true);
+          clone.querySelectorAll('input').forEach(i => {
+            if (i.classList.contains('qty')) i.value = 1; else i.value = '';
+            i.removeAttribute('disabled');
+          });
+          clone.querySelectorAll('select').forEach(s => { s.selectedIndex = 0; });
+          body.appendChild(clone);
+          bindLine(clone);
+        }
+        function removeLine(btn) {
+          const row = btn.closest('tr');
+          const body = document.getElementById('lines-body');
+          if (body.querySelectorAll('tr.line').length > 1) row.remove();
+        }
+        document.querySelectorAll('#lines-body tr.line').forEach(bindLine);
+      </script>
+
+    {% else %}
+      <div class="alert alert-warning">Étape inconnue. <a href="{{ url_for('movement_wizard', step=1) }}">Recommencer</a></div>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}

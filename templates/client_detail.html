@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}{{ client.name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h3 mb-0">{{ client.name }}</h1>
+  <div class="d-flex gap-2">
+    <a class="btn btn-primary" href="{{ url_for('movement_wizard', step=1, client_id=client.id) }}">
+      + Livraison / Reprise
+    </a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('clients') }}">← Retour clients</a>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-12 col-md-3">
+    {{ ui.stat_card("Fûts en jeu", view.kegs) }}
+  </div>
+  <div class="col-12 col-md-3">
+    {{ ui.stat_card("Bière facturée (cumul)", beer_billed_cum|eur) }}
+  </div>
+  <div class="col-12 col-md-3">
+    {{ ui.stat_card("Consigne en jeu", deposit_in_play|signed_eur) }}
+  </div>
+  <div class="col-12 col-md-3">
+    {{ ui.stat_card("Litres livrés (cumul)", ((liters_out_cum or litres_out_cum or 0)|float) ~ " L") }}
+  </div>
+</div>
+
+<h2 class="h5 mt-4 mb-2">Matériel en cours de prêt chez le client</h2>
+{{ ui.equipment_stats(equipment_totals) }}
+
+<h2 class="h5 mt-4 mb-2">Historique</h2>
+<div class="table-responsive">
+  <table class="table table-sm align-middle">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Type</th>
+        <th>Produit</th>
+        <th class="text-end">Qté</th>
+        <th class="text-end">Taille</th>
+        <th class="text-end">Prix TTC</th>
+        <th class="text-end">Consigne</th>
+        <th>Notes</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in movements %}
+      <tr>
+        <td>{{ m.created_at|dt }}</td>
+        <td>
+          {{ {'OUT':'Livraison','IN':'Reprise','DEFECT':'Défectueux','FULL':'Retour plein'}[m.type] if m.type in ['OUT','IN','DEFECT','FULL'] else m.type }}
+        </td>
+        <td>{{ m.variant.product.name }} — {{ m.variant.size_l }} L</td>
+        <td class="text-end">{{ m.qty }}</td>
+        <td class="text-end">{{ m.variant.size_l }} L</td>
+        <td class="text-end">{{ (m.unit_price_ttc if m.unit_price_ttc is not none else 0)|eur }}</td>
+        <td class="text-end">{{ (m.deposit_per_keg if m.deposit_per_keg is not none else 30)|eur }}</td>
+        <td>{{ m.notes or '' }}</td>
+        <td class="text-end">
+          <a class="btn btn-sm btn-outline-danger" href="{{ url_for('movement_confirm_delete', movement_id=m.id) }}">
+            Supprimer
+          </a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9" class="text-muted">Aucun mouvement pour l’instant.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

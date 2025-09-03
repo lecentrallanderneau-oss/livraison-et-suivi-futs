@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Supprimer saisie · Gestion fûts{% endblock %}
+
+{% block content %}
+<h1 class="h4 mb-3">Supprimer cette saisie ?</h1>
+<p class="text-muted">Cette action est irréversible.</p>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <dl class="row mb-0">
+      <dt class="col-sm-3">ID</dt>
+      <dd class="col-sm-9">{{ m.id }}</dd>
+
+      <dt class="col-sm-3">Date</dt>
+      <dd class="col-sm-9">{{ m.created_at|dt }}</dd>
+
+      <dt class="col-sm-3">Type</dt>
+      <dd class="col-sm-9">{{ m.type }}</dd>
+
+      <dt class="col-sm-3">Client</dt>
+      <dd class="col-sm-9">{{ m.client and m.client.name or '—' }}</dd>
+
+      <dt class="col-sm-3">Produit</dt>
+      <dd class="col-sm-9">
+        {% if m.variant and m.variant.product %}
+          {{ m.variant.product.name }} — {{ m.variant.size_l }} L
+        {% elif m.variant %}
+          {{ m.variant.id }}
+        {% else %}
+          —
+        {% endif %}
+      </dd>
+
+      <dt class="col-sm-3">Quantité</dt>
+      <dd class="col-sm-9">{{ m.qty or 0 }}</dd>
+
+      <dt class="col-sm-3">Prix unitaire TTC</dt>
+      <dd class="col-sm-9">
+        {% if m.unit_price_ttc is not none %}{{ '%.2f'|format(m.unit_price_ttc) }} €{% else %}—{% endif %}
+      </dd>
+
+      <dt class="col-sm-3">Consigne / fût</dt>
+      <dd class="col-sm-9">
+        {% if m.deposit_per_keg is not none %}{{ '%.2f'|format(m.deposit_per_keg) }} €{% else %}—{% endif %}
+      </dd>
+
+      <dt class="col-sm-3">Note</dt>
+      <dd class="col-sm-9">{{ m.notes or '—' }}</dd>
+    </dl>
+  </div>
+</div>
+
+<form method="post" action="{{ url_for('movement_delete', movement_id=m.id) }}" class="d-flex gap-2">
+  <button type="submit" class="btn btn-danger">Supprimer</button>
+  <a class="btn btn-outline-secondary" href="{{ url_for('client_detail', client_id=m.client_id) }}">Annuler</a>
+</form>
+{% endblock %}

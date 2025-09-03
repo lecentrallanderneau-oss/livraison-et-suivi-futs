@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Stock bar{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between">
+  <h1 class="h3 mb-0">Stock bar (fûts pleins)</h1>
+  <a href="{{ url_for('movement_wizard') }}" class="btn btn-outline-primary">+ Saisie</a>
+</div>
+<hr>
+
+{{ ui.alerts_list(alerts) }}
+
+<form method="post" class="card">
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0 align-middle">
+      <thead>
+        <tr>
+          <th>Produit</th>
+          <th class="text-center" style="width:100px;">Taille</th>
+          <th class="text-end" style="width:140px;">Prix TTC</th>
+          <th class="text-end" style="width:160px;">Stock (fûts)</th>
+          <th class="text-end" style="width:160px;">Seuil mini</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if rows and rows|length > 0 %}
+          {% for it in rows %}
+            {% set ismap = it is mapping %}
+            {% set v = ( it['variant'] if (ismap and 'variant' in it)
+                         else (it.variant if it.variant is defined else None) ) %}
+            {% set v = v or ( it['v'] if (ismap and 'v' in it) else (it.v if it.v is defined else None) ) %}
+
+            {% set inv = ( it['inventory'] if (ismap and 'inventory' in it)
+                           else (it.inventory if it.inventory is defined else None) ) %}
+            {% set qty_from_inv = (inv.qty if inv is not none and inv.qty is defined else none) %}
+            {% set qty_field = 0 %}
+            {% if qty_from_inv is not none %}
+              {% set qty_field = qty_from_inv %}
+            {% elif ismap and 'inventory_qty' in it %}
+              {% set qty_field = it['inventory_qty'] %}
+            {% elif ismap and 'qty' in it %}
+              {% set qty_field = it['qty'] %}
+            {% elif it.qty is defined %}
+              {% set qty_field = it.qty %}
+            {% endif %}
+
+            {% set rule = ( it['rule'] if (ismap and 'rule' in it)
+                            else (it.rule if it.rule is defined else None) ) %}
+            {% set min_from_rule = (rule.min_qty if rule is not none and rule.min_qty is defined else none) %}
+            {% set min_field = 0 %}
+            {% if min_from_rule is not none %}
+              {% set min_field = min_from_rule %}
+            {% elif ismap and 'min_qty' in it %}
+              {% set min_field = it['min_qty'] %}
+            {% elif it.min_qty is defined %}
+              {% set min_field = it.min_qty %}
+            {% endif %}
+
+            {% set price_ttc = (v.price_ttc if v is not none and v.price_ttc is defined else none) %}
+            {% set v_id = (v.id if v is not none and v.id is defined else none) %}
+
+            <tr>
+              <td>{{ (v.product.name if v is not none and v.product is defined and v.product else '—') }}</td>
+              <td class="text-center">{{ (v.size_l if v is not none and v.size_l is defined else '—') }}{% if v is not none and v.size_l is defined %} L{% endif %}</td>
+              <td class="text-end">
+                {% if price_ttc is not none %}
+                  {{ '%.2f'|format(price_ttc) }} €
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+
+              <td>
+                {% if v_id is not none %}
+                  <input
+                    type="number"
+                    name="qty_{{ v_id }}"
+                    class="form-control text-end"
+                    min="0" step="1"
+                    value="{{ qty_field }}">
+                {% else %}
+                  <input type="number" class="form-control text-end" min="0" step="1" value="{{ qty_field }}" disabled>
+                {% endif %}
+              </td>
+
+              <td>
+                {% if v_id is not none %}
+                  <input
+                    type="number"
+                    name="min_{{ v_id }}"
+                    class="form-control text-end"
+                    min="0" step="1"
+                    value="{{ min_field }}">
+                {% else %}
+                  <input type="number" class="form-control text-end" min="0" step="1" value="{{ min_field }}" disabled>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        {% else %}
+          <tr>
+            <td colspan="5" class="text-muted text-center">Aucune référence trouvée.</td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-footer d-flex gap-2">
+    <button class="btn btn-primary" type="submit">Enregistrer l’inventaire</button>
+    <a class="btn btn-outline-secondary" href="{{ url_for('index') }}">Retour</a>
+  </div>
+</form>
+{% endblock %}
