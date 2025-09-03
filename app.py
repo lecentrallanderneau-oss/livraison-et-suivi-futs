@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, flash
-from sqlalchemy import func, desc
+from sqlalchemy import func
 from models import (
     db,
     Client,
@@ -34,7 +34,7 @@ def _ensure_seed_clients():
 
 
 # ---------------------------------------------------------------------------------
-# App & Config (identique à l’existant, seules routes Éco-cups ajoutées précédemment)
+# App & Config
 # ---------------------------------------------------------------------------------
 def create_app():
     app = Flask(__name__)
@@ -48,33 +48,40 @@ def create_app():
 
     with app.app_context():
         db.create_all()
-        _ensure_seed_clients()  # <-- maintenant OK (définie plus haut)
+        _ensure_seed_clients()
 
     # --------------------------------
-    # Routes existantes (accueil, etc)
+    # Accueil
     # --------------------------------
     @app.route("/")
     def index():
-        # cartes existantes (clients, consignes, matériel, etc.) — conservées
         clients = Client.query.order_by(Client.name.asc()).all()
 
-        # alertes réassort (existant)
+        # ⚠️ IMPORTANT : on ne sélectionne plus l'entité Variant complète
+        # pour éviter la colonne manquante variants.name.
+        # On extrait explicitement uniquement ce dont on a besoin.
         low_stock = (
-            db.session.query(Variant, Inventory, ReorderRule)
+            db.session.query(
+                Product.name.label("product_name"),
+                Variant.capacity_l.label("capacity_l"),
+                Inventory.qty.label("qty"),
+                ReorderRule.min_qty.label("min_qty"),
+            )
             .join(Inventory, Inventory.variant_id == Variant.id)
+            .join(Product, Product.id == Variant.product_id)
             .join(ReorderRule, ReorderRule.variant_id == Variant.id)
             .filter(Inventory.qty < ReorderRule.min_qty)
             .all()
         )
 
-        # NOUVEAU : dernières opérations Éco-cups (pour un visuel direct)
+        # Dernières opérations Éco-cups
         last_ecocup_ops = (
             EcocupOperation.query.order_by(EcocupOperation.op_date.desc())
             .limit(10)
             .all()
         )
 
-        # NOUVEAU : total Éco-cups du jour (minuit -> maintenant)
+        # Agrégats Éco-cups du jour (minuit -> maintenant)
         day_agg = (
             db.session.query(
                 func.coalesce(func.sum(EcocupOperation.qty_loaned), 0),
@@ -107,19 +114,19 @@ def create_app():
         return render_template(
             "index.html",
             clients=clients,
-            low_stock=low_stock,
-            last_ecocup_ops=last_ecocup_ops,  # <-- nouveau
+            low_stock=low_stock,  # tuples avec champs nommés
+            last_ecocup_ops=last_ecocup_ops,
             day_ecocup_summary={
                 "loaned": day_loaned or 0,
                 "returned": day_returned or 0,
                 "lost_amount": round(day_lost_amount or 0, 2),
                 "wash_amount": round(day_wash_amount or 0, 2),
                 "total": day_total_amount,
-            },  # <-- nouveau
+            },
         )
 
     # ------------------------------------------------
-    # NOUVEAU : Éco-cups — liste + saisie d’une opération
+    # Éco-cups — liste + saisie d’une opération
     # ------------------------------------------------
     @app.route("/ecocups", methods=["GET", "POST"])
     def ecocups():
