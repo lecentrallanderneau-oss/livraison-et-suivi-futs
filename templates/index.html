@@ -18,14 +18,21 @@
 
   <div class="row g-3">
 
-    {# ---- Existant : alertes réassort (conservé) ---- #}
+    {# ---- Alertes réassort (MAJ : n'utilise plus variants.name) ---- #}
     <div class="col-12">
       <h4 class="mb-2">Alertes réassort</h4>
       {% if low_stock and low_stock|length > 0 %}
         <ul class="list-group">
-          {% for v, inv, rule in low_stock %}
+          {% for row in low_stock %}
+            {# row.product_name, row.capacity_l, row.qty, row.min_qty #}
             <li class="list-group-item d-flex justify-content-between align-items-center">
-              <span><strong>{{ v.product.name }} — {{ v.name }}</strong> (Stock: {{ inv.qty }}, Mini: {{ rule.min_qty }})</span>
+              <span>
+                <strong>{{ row.product_name }}</strong>
+                {% if row.capacity_l is not none %}
+                  — {{ row.capacity_l|round(2) }} L
+                {% endif %}
+                (Stock: {{ row.qty }}, Mini: {{ row.min_qty }})
+              </span>
               <span class="badge bg-danger">À commander</span>
             </li>
           {% endfor %}
@@ -35,7 +42,7 @@
       {% endif %}
     </div>
 
-    {# ---- NOUVEAU : Éco-cups ---- #}
+    {# ---- Éco-cups ---- #}
     <div class="col-12">
       <div class="card border-2">
         <div class="card-body">
@@ -99,7 +106,7 @@
       </div>
     </div>
 
-    {# ---- Tu peux avoir ici tes autres blocs existants (clients, consignes, matériel, etc.) ---- #}
+    {# ---- Place aux autres blocs existants de ta page d'accueil ---- #}
 
   </div>
 </div>
