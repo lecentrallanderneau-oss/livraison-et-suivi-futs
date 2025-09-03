@@ -44,7 +44,7 @@
 
         <div>
           <label class="form-label">Date</label>
-          <input type="date" name="date" class="form-control" value="{{ wiz.get('date') or today_iso }}">
+          <input type="date" name="date" class="form-control" value="">
           <div class="form-text">Laissez vide pour utiliser la date de saisie.</div>
         </div>
 
@@ -85,9 +85,7 @@
             <div><strong>Date :</strong> {{ wiz.get('date') or 'aujourd’hui' }}</div>
           </div>
           <div class="col-12 col-md-6">
-            <div><strong>Client :</strong>
-              {{ (current_client.name if current_client else '—') }}
-            </div>
+            <div><strong>Client :</strong> {{ (current_client.name if current_client else '—') }}</div>
           </div>
         </div>
       </div>
@@ -177,58 +175,44 @@
           const txt = (selectEl.options[selectEl.selectedIndex]?.text || "").toLowerCase();
           return txt.includes("matériel") && txt.includes("seul");
         }
-
         function applyEquipOnlyState(row, equipOnly) {
           const qty = row.querySelector('.qty');
           const price = row.querySelector('.price');
           const deposit = row.querySelector('.deposit');
-
           if (equipOnly) {
-            qty.value = 0;
-            price.value = 0;
-            deposit.value = 0;
-
-            qty.setAttribute('disabled', 'disabled');
-            price.setAttribute('disabled', 'disabled');
-            deposit.setAttribute('disabled', 'disabled');
+            qty.value = 0; price.value = 0; deposit.value = 0;
+            qty.setAttribute('disabled','disabled');
+            price.setAttribute('disabled','disabled');
+            deposit.setAttribute('disabled','disabled');
           } else {
             qty.removeAttribute('disabled');
             price.removeAttribute('disabled');
             deposit.removeAttribute('disabled');
           }
         }
-
         function bindLine(row) {
           const select = row.querySelector('.variant-select');
           select.addEventListener('change', function() {
             applyEquipOnlyState(row, isEquipOnlyOption(select));
           });
         }
-
         function addLine() {
           const body = document.getElementById('lines-body');
           const tpl = body.querySelector('tr.line');
           const clone = tpl.cloneNode(true);
-          // reset champs
           clone.querySelectorAll('input').forEach(i => {
-            if (i.classList.contains('qty')) i.value = 1;
-            else i.value = '';
+            if (i.classList.contains('qty')) i.value = 1; else i.value = '';
             i.removeAttribute('disabled');
           });
           clone.querySelectorAll('select').forEach(s => { s.selectedIndex = 0; });
           body.appendChild(clone);
           bindLine(clone);
         }
-
         function removeLine(btn) {
           const row = btn.closest('tr');
           const body = document.getElementById('lines-body');
-          if (body.querySelectorAll('tr.line').length > 1) {
-            row.remove();
-          }
+          if (body.querySelectorAll('tr.line').length > 1) row.remove();
         }
-
-        // Bind initial
         document.querySelectorAll('#lines-body tr.line').forEach(bindLine);
       </script>
 
