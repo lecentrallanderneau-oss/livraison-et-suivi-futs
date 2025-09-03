@@ -1,9 +1,22 @@
 {% extends "base.html" %}
 {% block title %}Fûts · Accueil{% endblock %}
 {% block content %}
+
+{% if alerts and alerts|length > 0 %}
+<div class="alert alert-warning d-flex flex-column gap-1">
+  <div class="fw-bold">⚠️ Réassort conseillé</div>
+  <ul class="mb-0">
+    {% for a in alerts %}
+      <li>{{ a.product.name }} — {{ a.variant.size_l }} L : en stock {{ a.qty }}, mini {{ a.min_qty }}, à commander {{ a.need }}</li>
+    {% endfor %}
+  </ul>
+  <a href="{{ url_for('stock') }}" class="small">Mettre à jour l'inventaire ›</a>
+</div>
+{% endif %}
+
 <div class="d-flex align-items-center justify-content-between">
   <h1 class="h3 mb-0">Stock par client</h1>
-  <a href="{{ url_for('movement_new') }}" class="btn btn-primary">+ Livraisons / Reprise</a>
+  <a href="{{ url_for('movement_wizard') }}" class="btn btn-primary">+ Mouvement (pas à pas)</a>
 </div>
 <hr>
 
@@ -14,15 +27,9 @@
         <div class="me-3">
           <a class="client-link" href="{{ url_for('client_detail', client_id=c.id) }}">{{ c.name }}</a>
           <div class="text-muted small mt-1">
-            Livraisons cumulées: {{ c.kegs }} fût(s), total bière: {{ '%.2f'|format(c.beer_eur or 0) }} €<br>
-            Dernière livraison: {{ c.last_out or 'Aucune' }} &nbsp;•&nbsp;
-            {% if c.last_in %}Dernière reprise: {{ c.last_in }}{% else %}Aucune reprise{% endif %}
-          </div>
-          <div class="mt-2">
-            <span class="eq-pill">Tireuse(s): {{ c.eq.tireuse or 0 }}</span>
-            <span class="eq-pill">CO₂: {{ c.eq.co2 or 0 }}</span>
-            <span class="eq-pill">Comptoir(s): {{ c.eq.comptoir or 0 }}</span>
-            <span class="eq-pill">Tonnelle(s): {{ c.eq.tonnelle or 0 }}</span>
+            {% if c.last_out %}Dernière livraison : {{ c.last_out.date().isoformat() }}{% else %}Aucune livraison{% endif %}
+            ·
+            {% if c.last_in %}Dernière reprise : {{ c.last_in.date().isoformat() }}{% else %}Aucune reprise{% endif %}
           </div>
         </div>
 
