@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Éco-cups{% endblock %}
+
+{% block content %}
+<div class="container py-3">
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  <div class="row g-3">
+    <div class="col-lg-4">
+      <div class="card border-2">
+        <div class="card-body">
+          <h4 class="card-title mb-3">Saisir une opération</h4>
+          <form method="post" action="{{ url_for('ecocups') }}">
+            <div class="mb-3">
+              <label class="form-label">Client</label>
+              <select name="client_id" class="form-select" required>
+                <option value="">— Choisir —</option>
+                {% for c in clients %}
+                  <option value="{{ c.id }}">{{ c.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="row">
+              <div class="col-6 mb-3">
+                <label class="form-label">Gobelets prêtés</label>
+                <input type="number" min="0" step="1" name="qty_loaned" class="form-control" value="0" required>
+              </div>
+              <div class="col-6 mb-3">
+                <label class="form-label">Gobelets rendus</label>
+                <input type="number" min="0" step="1" name="qty_returned" class="form-control" value="0" required>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="col-6 mb-3">
+                <label class="form-label">Tarif perte (€/manquant)</label>
+                <input type="number" min="0" step="0.01" name="lost_fee_per" class="form-control" value="1.00" required>
+              </div>
+              <div class="col-6 mb-3">
+                <label class="form-label">Tarif lavage (€/rendu)</label>
+                <input type="number" min="0" step="0.01" name="wash_fee_per" class="form-control" value="0.10" required>
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Note</label>
+              <textarea name="note" class="form-control" rows="2" placeholder="Ex : Match du vendredi, retour lundi"></textarea>
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100">Enregistrer</button>
+          </form>
+          <p class="small text-muted mt-2 mb-0">
+            Règle : 1 € par gobelet manquant + 0,10 € de lavage par gobelet rendu.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-8">
+      <div class="card border-2">
+        <div class="card-body">
+          <h4 class="card-title mb-3">Historique des opérations</h4>
+          {% if ops and ops|length > 0 %}
+            <div class="table-responsive">
+              <table class="table table-striped align-middle">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Client</th>
+                    <th class="text-end">Prêtés</th>
+                    <th class="text-end">Rendus</th>
+                    <th class="text-end">Pertes</th>
+                    <th class="text-end">Lavage</th>
+                    <th class="text-end">Total</th>
+                    <th>Note</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for op in ops %}
+                    <tr>
+                      <td>{{ op.op_date.strftime("%d/%m/%Y %H:%M") }}</td>
+                      <td>{{ op.client.name }}</td>
+                      <td class="text-end">{{ op.qty_loaned }}</td>
+                      <td class="text-end">{{ op.qty_returned }}</td>
+                      <td class="text-end">{{ op.lost_amount|round(2) }} €</td>
+                      <td class="text-end">{{ op.wash_amount|round(2) }} €</td>
+                      <td class="text-end"><strong>{{ op.total_amount|round(2) }} €</strong></td>
+                      <td>{{ op.note }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <div class="text-muted">Aucune opération enregistrée pour le moment.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
