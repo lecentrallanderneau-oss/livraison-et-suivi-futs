@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: livraison-et-suivi-futs
+    env: python
+    plan: free
+    autoDeploy: true
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn -k gthread -w ${WEB_CONCURRENCY:-1} --threads ${WEB_THREADS:-4} --timeout ${GUNICORN_TIMEOUT:-120} --graceful-timeout ${GUNICORN_TIMEOUT:-120} --bind 0.0.0.0:$PORT app:app --log-level info --access-logfile - --error-logfile -"
+    healthCheckPath: /healthz
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: WEB_CONCURRENCY
+        value: 1
+      - key: WEB_THREADS
+        value: 4
+      - key: GUNICORN_TIMEOUT
+        value: 120

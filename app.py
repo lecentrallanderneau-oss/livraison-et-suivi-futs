@@ -1,0 +1,577 @@
+import os
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+from datetime import datetime, date, time
+from flask import Flask, render_template, request, redirect, url_for, flash, session, Response
+from sqlalchemy import func, text
+
+from models import db, Client, Product, Variant, Movement, ReorderRule
+from seed import seed_if_empty
+import utils as U
+
+
+def create_app():
+    app = Flask(__name__)
+    app.secret_key = os.environ.get("SECRET_KEY", "dev")
+    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///data.db")
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    db.init_app(app)
+
+    with app.app_context():
+        db.create_all()
+        # --- Migration douce: ajouter clients.email si absent ---
+        eng = db.engine.name
+        try:
+            if eng == "postgresql":
+                db.session.execute(text("ALTER TABLE clients ADD COLUMN IF NOT EXISTS email VARCHAR(255);"))
+                db.session.commit()
+            elif eng == "sqlite":
+                cols = db.session.execute(text("PRAGMA table_info(clients);")).fetchall()
+                names = {c[1] for c in cols}  # (cid, name, type, notnull, dflt, pk)
+                if "email" not in names:
+                    db.session.execute(text("ALTER TABLE clients ADD COLUMN email TEXT;"))
+                    db.session.commit()
+        except Exception:
+            db.session.rollback()  # ne pas bloquer le démarrage si la colonne existe déjà
+        seed_if_empty()
+
+    # ----------------- Healthcheck -----------------
+    @app.route("/healthz", methods=["GET", "HEAD"])
+    def healthz():
+        return Response("ok", status=200, mimetype="text/plain")
+
+    # ----------------- Filtres Jinja -----------------
+    @app.template_filter("dt")
+    def fmt_dt(value):
+        if not value:
+            return ""
+        try:
+            return value.strftime("%d/%m/%Y")
+        except Exception:
+            return str(value)
+
+    @app.template_filter("eur")
+    def fmt_eur(v):
+        if v is None:
+            return "-"
+        return f"{v:,.2f} €".replace(",", " ").replace(".", ",")
+
+    @app.template_filter("signed_eur")
+    def fmt_signed_eur(v):
+        """Affiche +12,34 € / -12,34 € avec format français."""
+        if v is None:
+            return "-"
+        sign = "+" if v > 0 else ("-" if v < 0 else "")
+        abs_v = abs(v)
+        return f"{sign}{abs_v:,.2f} €".replace(",", " ").replace(".", ",")
+
+    # ----------------- Helper: fûts “ouverts” par variante chez un client -----------------
+    def _open_kegs_by_variant(client_id: int):
+        out_rows = dict(
+            db.session.query(Movement.variant_id, func.coalesce(func.sum(Movement.qty), 0))
+            .filter(Movement.client_id == client_id, Movement.type == "OUT")
+            .group_by(Movement.variant_id)
+            .all()
+        )
+        back_rows = dict(
+            db.session.query(Movement.variant_id, func.coalesce(func.sum(Movement.qty), 0))
+            .filter(Movement.client_id == client_id, Movement.type.in_(["IN", "DEFECT", "FULL"]))
+            .group_by(Movement.variant_id)
+            .all()
+        )
+        all_vids = set(out_rows) | set(back_rows)
+        return {vid: int(out_rows.get(vid, 0)) - int(back_rows.get(vid, 0)) for vid in all_vids}
+
+    # ----------------- Envoi email -----------------
+    def _send_email(to_addr: str, subject: str, body_text: str, body_html: str | None = None):
+        host = os.environ.get("SMTP_HOST")
+        port = int(os.environ.get("SMTP_PORT", "587"))
+        user = os.environ.get("SMTP_USER")
+        pwd = os.environ.get("SMTP_PASS")
+        mail_from = os.environ.get("MAIL_FROM") or user
+        mail_bcc = os.environ.get("MAIL_BCC")  # optionnel
+
+        if not (host and port and user and pwd and mail_from and to_addr):
+            # Config incomplète => on n'envoie pas mais on n'échoue pas
+            return False
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = mail_from
+        msg["To"] = to_addr
+        if mail_bcc:
+            msg["Bcc"] = mail_bcc
+
+        msg.attach(MIMEText(body_text, "plain", "utf-8"))
+        if body_html:
+            msg.attach(MIMEText(body_html, "html", "utf-8"))
+
+        if port == 465:
+            server = smtplib.SMTP_SSL(host, port)
+        else:
+            server = smtplib.SMTP(host, port)
+            server.starttls()
+
+        try:
+            server.login(user, pwd)
+            server.send_message(msg)
+            return True
+        finally:
+            try:
+                server.quit()
+            except Exception:
+                pass
+
+    # ----------------- Pages -----------------
+    @app.route("/")
+    def index():
+        clients = Client.query.order_by(Client.name.asc()).all()
+        cards = [U.summarize_client_for_index(c) for c in clients]
+        totals = U.summarize_totals(cards)
+        alerts = U.compute_reorder_alerts()
+        return render_template("index.html", cards=cards, totals=totals, alerts=alerts)
+
+    @app.route("/clients")
+    def clients():
+        clients = Client.query.order_by(Client.name.asc()).all()
+        return render_template("clients.html", clients=clients)
+
+    @app.route("/client/new", methods=["GET", "POST"])
+    def client_new():
+        if request.method == "POST":
+            name = request.form.get("name", "").strip()
+            email = (request.form.get("email") or "").strip() or None
+            if not name:
+                flash("Nom obligatoire.", "warning")
+                return render_template("client_form.html")
+            c = Client(name=name, email=email)
+            db.session.add(c)
+            db.session.commit()
+            flash("Client créé.", "success")
+            return redirect(url_for("clients"))
+        return render_template("client_form.html")
+
+    @app.route("/client/<int:client_id>/edit", methods=["GET", "POST"])
+    def client_edit(client_id):
+        c = Client.query.get_or_404(client_id)
+        if request.method == "POST":
+            name = request.form.get("name", "").strip()
+            email = (request.form.get("email") or "").strip() or None
+            if not name:
+                flash("Nom obligatoire.", "warning")
+                return render_template("client_form.html", client=c)
+            c.name = name
+            c.email = email
+            db.session.commit()
+            flash("Client mis à jour.", "success")
+            return redirect(url_for("clients"))
+        return render_template("client_form.html", client=c)
+
+    @app.route("/client/<int:client_id>/delete", methods=["POST"])
+    def client_delete(client_id):
+        c = Client.query.get_or_404(client_id)
+        db.session.delete(c)
+        db.session.commit()
+        flash("Client supprimé.", "success")
+        return redirect(url_for("clients"))
+
+    @app.route("/client/<int:client_id>")
+    def client_detail(client_id):
+        c = Client.query.get_or_404(client_id)
+        view = U.summarize_client_detail(c)
+        movements = (
+            Movement.query.filter_by(client_id=client_id)
+            .order_by(Movement.created_at.desc(), Movement.id.desc())
+            .all()
+        )
+        return render_template(
+            "client_detail.html",
+            client=c,
+            view=view,
+            movements=movements,
+            beer_billed_cum=view["beer_eur"],
+            deposit_in_play=view["deposit_eur"],
+            equipment_totals=view["equipment"],
+            liters_out_cum=view.get("liters_out_cum", 0.0),
+            litres_out_cum=view.get("liters_out_cum", 0.0),
+        )
+
+    @app.route("/catalog")
+    def catalog():
+        variants = (
+            db.session.query(Variant)
+            .join(Product, Variant.product_id == Product.id)
+            .filter(~Product.name.ilike("%ecocup%"), ~Product.name.ilike("%gobelet%"))
+            .order_by(Product.name, Variant.size_l)
+            .all()
+        )
+        return render_template("catalog.html", variants=variants)
+
+    # ------------- Saisie (ex “mouvement pas à pas”) -------------
+    @app.route("/movement/new", methods=["GET"])
+    def movement_new():
+        return redirect(url_for("movement_wizard"))
+
+    @app.route("/movement/wizard", methods=["GET", "POST"])
+    def movement_wizard():
+        if "wiz" not in session:
+            session["wiz"] = {}
+        wiz = session["wiz"]
+
+        # Préselection client éventuelle
+        q_client_id = request.args.get("client_id", type=int)
+        if q_client_id:
+            wiz["client_id"] = q_client_id
+            session.modified = True
+
+        if request.method == "GET":
+            step = int(request.args.get("step", 1))
+            if step == 1:
+                # Date NON pré-remplie ; si vide à l’enregistrement -> date de saisie
+                return render_template("movement_wizard.html", step=1, wiz=wiz)
+            elif step == 2:
+                clients = Client.query.order_by(Client.name.asc()).all()
+                return render_template("movement_wizard.html", step=2, wiz=wiz, clients=clients)
+            elif step == 3:
+                current_client = Client.query.get(wiz["client_id"]) if wiz.get("client_id") else None
+                return render_template("movement_wizard.html", step=3, wiz=wiz, current_client=current_client)
+            elif step == 4:
+                # Base: tout sauf ecocup/gobelet
+                base_q = (
+                    db.session.query(Variant)
+                    .join(Product, Variant.product_id == Product.id)
+                    .filter(~Product.name.ilike("%ecocup%"), ~Product.name.ilike("%gobelet%"))
+                    .order_by(Product.name, Variant.size_l)
+                )
+                if wiz.get("type") == "IN" and wiz.get("client_id"):
+                    open_map = _open_kegs_by_variant(wiz["client_id"])
+                    allowed_ids = {vid for vid, openq in open_map.items() if openq > 0}
+                    # Laisser “Matériel seul …” toujours sélectionnable
+                    equip_ids = set(
+                        vid for (vid,) in (
+                            db.session.query(Variant.id)
+                            .join(Product, Variant.product_id == Product.id)
+                            .filter(
+                                (~Product.name.ilike("%ecocup%")),
+                                (~Product.name.ilike("%gobelet%")),
+                                (
+                                    Product.name.ilike("%matériel%seul%")
+                                    | Product.name.ilike("%materiel%seul%")
+                                    | Product.name.ilike("%Matériel seul%")
+                                    | Product.name.ilike("%Materiel seul%")
+                                )
+                            ).all()
+                        )
+                    )
+                    final_ids = list(allowed_ids | equip_ids)
+                    base_q = base_q.filter(Variant.id.in_(final_ids)) if final_ids else base_q.filter(Variant.id.in_([-1]))
+                variants = base_q.all()
+                return render_template("movement_wizard.html", step=4, wiz=wiz, variants=variants)
+            return redirect(url_for("movement_wizard", step=1))
+
+        # POST
+        step = int(request.form.get("step", 1))
+        if step == 1:
+            mtype = request.form.get("type")
+            if mtype not in U.MOV_TYPES:
+                flash("Type invalide.", "warning")
+                return redirect(url_for("movement_wizard", step=1))
+            wiz["type"] = mtype
+            wiz["date"] = request.form.get("date") or None  # peut rester vide -> date de saisie
+            session.modified = True
+            return redirect(url_for("movement_wizard", step=2))
+
+        elif step == 2:
+            client_id = request.form.get("client_id", type=int)
+            if not Client.query.get(client_id):
+                flash("Client introuvable.", "warning")
+                return redirect(url_for("movement_wizard", step=2))
+            wiz["client_id"] = client_id
+            session.modified = True
+            return redirect(url_for("movement_wizard", step=3))
+
+        elif step == 3:
+            session.modified = True
+            return redirect(url_for("movement_wizard", step=4))
+
+        elif step == 4:
+            if (wiz.get("client_id") is None) or (wiz.get("type") is None):
+                flash("Informations incomplètes.", "warning")
+                return redirect(url_for("movement_wizard", step=1))
+
+            # Date finale : vide -> date de saisie (now)
+            if wiz.get("date"):
+                try:
+                    y, m_, d2 = [int(x) for x in wiz["date"].split("-")]
+                    created_at = datetime.combine(date(y, m_, d2), time(hour=12))
+                except Exception:
+                    created_at = U.now_utc()
+            else:
+                created_at = U.now_utc()
+
+            variant_ids = request.form.getlist("variant_id")
+            qtys = request.form.getlist("qty")
+            unit_prices = request.form.getlist("unit_price_ttc")
+            deposits = request.form.getlist("deposit_per_keg")
+            notes = request.form.get("notes") or None
+
+            # Matériel prêté/repris (inséré en note)
+            t = request.form.get("eq_tireuse", type=int)
+            c2 = request.form.get("eq_co2", type=int)
+            cp = request.form.get("eq_comptoir", type=int)
+            tn = request.form.get("eq_tonnelle", type=int)
+            if any(v is not None for v in (t, c2, cp, tn)):
+                t = t or 0
+                c2 = c2 or 0
+                cp = cp or 0
+                tn = tn or 0
+                eq_note = f"tireuse={t};co2={c2};comptoir={cp};tonnelle={tn}"
+                notes = f"{(notes + ';') if notes else ''}{eq_note}"
+
+            mtype = wiz["type"]
+            client_id = wiz["client_id"]
+            client = Client.query.get(client_id)
+
+            open_map = _open_kegs_by_variant(client_id) if mtype == "IN" else {}
+            created_ids: list[int] = []
+            created = 0
+            violations = []
+
+            for i, vid in enumerate(variant_ids):
+                try:
+                    vid_int = int(vid)
+                except Exception:
+                    continue
+
+                try:
+                    qty_int = int(qtys[i]) if i < len(qtys) else 0
+                except Exception:
+                    qty_int = 0
+
+                up = None
+                dep = None
+                if i < len(unit_prices) and unit_prices[i]:
+                    try:
+                        up = float(unit_prices[i])
+                    except Exception:
+                        up = None
+                if i < len(deposits) and deposits[i]:
+                    try:
+                        dep = float(deposits[i])
+                    except Exception:
+                        dep = None
+
+                v = Variant.query.get(vid_int)
+                if not v:
+                    continue
+
+                # “Matériel seul” => forcer 0 partout et PAS de contrôle d’enjeu de fûts
+                pname = (v.product.name if v and v.product else "") or ""
+                is_equipment_only = "matériel" in pname.lower() and "seul" in pname.lower()
+                if is_equipment_only:
+                    qty_int = 0
+                    up = 0.0
+                    dep = 0.0
+                else:
+                    if up is None and (v.price_ttc is not None):
+                        up = v.price_ttc
+                    if dep is None:
+                        dep = U.DEFAULT_DEPOSIT  # 30€
+
+                    if mtype == "IN":
+                        open_q = int(open_map.get(vid_int, 0))
+                        if open_q <= 0 or qty_int > open_q:
+                            label = f"{v.product.name} — {v.size_l} L"
+                            violations.append((label, open_q))
+                            continue
+
+                mv = Movement(
+                    client_id=client_id,
+                    variant_id=vid_int,
+                    type=mtype,
+                    qty=qty_int,
+                    unit_price_ttc=up,
+                    deposit_per_keg=dep,
+                    notes=notes,
+                    created_at=created_at,
+                )
+                db.session.add(mv)
+                db.session.flush()  # pour obtenir l'id
+                created_ids.append(mv.id)
+
+                if qty_int > 0:
+                    U.apply_inventory_effect(mtype, vid_int, qty_int)
+                created += 1
+
+            if violations:
+                db.session.rollback()
+                msgs = [f"{label} (max {maxq})" for (label, maxq) in violations]
+                flash("Reprise impossible pour : " + ", ".join(msgs), "warning")
+                return redirect(url_for("movement_wizard", step=4))
+
+            db.session.commit()
+
+            # -------- Envoi e-mail de récap (silencieux si pas d’e-mail/config) --------
+            try:
+                if client and client.email and created_ids:
+                    lines = (
+                        db.session.query(Movement, Variant, Product)
+                        .join(Variant, Movement.variant_id == Variant.id)
+                        .join(Product, Variant.product_id == Product.id)
+                        .filter(Movement.id.in_(created_ids))
+                        .order_by(Movement.id.asc())
+                        .all()
+                    )
+                    type_label = "Livraison" if mtype == "OUT" else ("Reprise" if mtype == "IN" else mtype)
+                    subject = f"[Saisie] {type_label} – {client.name} – {created_at.strftime('%d/%m/%Y')}"
+                    # totaux simples pour le mail
+                    total_beer_eur = 0.0
+                    total_deposit_delta = 0.0
+                    items = []
+                    for m, v, p in lines:
+                        pname = p.name
+                        size = v.size_l
+                        qty = m.qty or 0
+                        price = m.unit_price_ttc or 0.0
+                        dep = m.deposit_per_keg or 0.0
+                        is_equipment_only = "matériel" in pname.lower() and "seul" in pname.lower()
+                        label = f"{pname} {size}L" if size else pname
+                        items.append({"label": label, "qty": qty, "unit_price": price, "deposit": dep, "equipment_only": is_equipment_only})
+                        if not is_equipment_only:
+                            if m.type == "OUT":
+                                total_beer_eur += qty * price
+                                total_deposit_delta += qty * dep
+                            elif m.type == "IN":
+                                total_deposit_delta -= qty * dep
+
+                    body_text = render_template(
+                        "email_movement_summary.txt",
+                        client=client,
+                        type_label=type_label,
+                        created_at=created_at,
+                        items=items,
+                        total_beer_eur=total_beer_eur,
+                        total_deposit_delta=total_deposit_delta,
+                        notes=notes,
+                    )
+                    body_html = render_template(
+                        "email_movement_summary.html",
+                        client=client,
+                        type_label=type_label,
+                        created_at=created_at,
+                        items=items,
+                        total_beer_eur=total_beer_eur,
+                        total_deposit_delta=total_deposit_delta,
+                        notes=notes,
+                    )
+                    ok = _send_email(client.email, subject, body_text, body_html)
+                    if ok:
+                        flash("Récapitulatif envoyé par e-mail au client.", "success")
+                    else:
+                        flash("Saisie enregistrée. E-mail non envoyé (config SMTP incomplète).", "warning")
+            except Exception:
+                # On ne casse jamais la saisie si l’e-mail échoue
+                flash("Saisie OK mais échec d’envoi e-mail (voir configuration SMTP).", "warning")
+
+            if created:
+                flash(f"{created} ligne(s) enregistrée(s).", "success")
+                return redirect(url_for("client_detail", client_id=client_id))
+            else:
+                flash("Aucune ligne valide.", "warning")
+                return redirect(url_for("movement_wizard", step=4))
+
+        return redirect(url_for("movement_wizard", step=1))
+
+    # ---- suppression mouvement ----
+    @app.route("/movement/<int:movement_id>/confirm-delete", methods=["GET"])
+    def movement_confirm_delete(movement_id):
+        m = Movement.query.get_or_404(movement_id)
+        return render_template("movement_confirm_delete.html", m=m)
+
+    @app.route("/movement/<int:movement_id>/delete", methods=["POST"])
+    def movement_delete(movement_id):
+        m = Movement.query.get_or_404(movement_id)
+        client_id = m.client_id
+        # Utiliser l’utilitaire présent dans utils.py
+        if m.qty and m.variant_id:
+            U.revert_inventory_effect(m.type, m.variant_id, m.qty or 0)
+        db.session.delete(m)
+        db.session.commit()
+        flash("Saisie supprimée.", "success")
+        return redirect(url_for("client_detail", client_id=client_id))
+
+    # ---- Stock ----
+    @app.route("/stock", methods=["GET", "POST"])
+    def stock():
+        if request.method == "POST":
+            changed = 0
+            # QTY_*  -> Inventory
+            for key, val in request.form.items():
+                if not key.startswith("qty_"):
+                    continue
+                try:
+                    vid = int(key.split("_", 1)[1])
+                except Exception:
+                    continue
+                try:
+                    qty = int(val or 0)
+                except Exception:
+                    qty = 0
+                inv = U.get_or_create_inventory(vid)
+                if inv.qty != qty:
+                    inv.qty = qty
+                    changed += 1
+
+            # MIN_* -> ReorderRule
+            for key, val in request.form.items():
+                if not key.startswith("min_"):
+                    continue
+                try:
+                    vid = int(key.split("_", 1)[1])
+                except Exception:
+                    continue
+                try:
+                    minq = int(val or 0)
+                except Exception:
+                    minq = 0
+
+                rule = ReorderRule.query.filter_by(variant_id=vid).first()
+                if not rule:
+                    rule = ReorderRule(variant_id=vid, min_qty=minq)
+                    db.session.add(rule)
+                    changed += 1
+                else:
+                    if rule.min_qty != minq:
+                        rule.min_qty = minq
+                        changed += 1
+
+            db.session.commit()
+            flash(f"Inventaire enregistré ({changed} mise(s) à jour).", "success")
+            return redirect(url_for("stock"))
+
+        rows = U.get_stock_items()
+        alerts = U.compute_reorder_alerts()
+        return render_template("stock.html", rows=rows, alerts=alerts)
+
+    @app.route("/product/<int:variant_id>")
+    def product_variant(variant_id):
+        v = Variant.query.get_or_404(variant_id)
+        return render_template("product.html", variant=v, product=v.product)
+
+    @app.errorhandler(404)
+    def not_found(e):
+        return render_template("404.html"), 404
+
+    @app.errorhandler(500)
+    def server_error(e):
+        return render_template("500.html"), 500
+
+    return app
+
+
+app = create_app()
+
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
