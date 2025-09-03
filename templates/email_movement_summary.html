@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+  <body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color:#222; line-height:1.5;">
+    <h2 style="margin:0 0 8px 0;">{{ type_label }} – {{ client.name }}</h2>
+    <p style="margin:0 0 16px 0;">Date : <strong>{{ created_at|dt }}</strong></p>
+
+    <table cellpadding="6" cellspacing="0" border="0" style="border-collapse:collapse; width:100%; background:#fafafa;">
+      <thead>
+        <tr>
+          <th align="left">Article</th>
+          <th align="right">Qté</th>
+          <th align="right">Prix TTC</th>
+          <th align="right">Consigne / fût</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for it in items %}
+        <tr>
+          <td>{{ it.label }}{% if it.equipment_only %} <em>(matériel seul)</em>{% endif %}</td>
+          <td align="right">{% if it.equipment_only %}—{% else %}{{ it.qty }}{% endif %}</td>
+          <td align="right">{% if it.equipment_only %}—{% else %}{% if it.unit_price %}{{ '%.2f'|format(it.unit_price) }} €{% else %}—{% endif %}{% endif %}</td>
+          <td align="right">{% if it.deposit %}{{ '%.2f'|format(it.deposit) }} €{% else %}—{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    {% if notes %}
+      <p style="margin-top:12px;"><strong>Notes :</strong> {{ notes }}</p>
+    {% endif %}
+
+    <p style="margin-top:16px;">
+      <strong>Bière TTC :</strong> {{ total_beer_eur|eur }}<br>
+      <strong>Variation consigne :</strong> {{ total_deposit_delta|eur }}
+    </p>
+
+    <p style="color:#666;">Merci pour votre confiance.</p>
+  </body>
+</html>
