@@ -19,16 +19,11 @@ from models import (
 # -------------
 def _ensure_seed_clients():
     """
-    Assure quelques clients par défaut si la table est vide.
-    (Conserve la logique existante, sans toucher aux données en place.)
+    Ajoute quelques clients si la table est vide.
+    (Ne modifie pas de données existantes.)
     """
     if Client.query.count() == 0:
-        names = [
-            "Landerneau Football Club",
-            "Ville de Landerneau",
-            "Association des Commerçants",
-        ]
-        for n in names:
+        for n in ["Landerneau Football Club", "Ville de Landerneau", "Association des Commerçants"]:
             db.session.add(Client(name=n))
         db.session.commit()
 
@@ -38,9 +33,7 @@ def _ensure_seed_clients():
 # ---------------------------------------------------------------------------------
 def create_app():
     app = Flask(__name__)
-    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
-        "DATABASE_URL", "sqlite:///data.db"
-    )
+    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///data.db")
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.secret_key = os.environ.get("SECRET_KEY", "dev")
 
@@ -57,7 +50,7 @@ def create_app():
     def index():
         clients = Client.query.order_by(Client.name.asc()).all()
 
-        # IMPORTANT : ne lit AUCUNE colonne de variants (name/capacity_l peuvent ne pas exister en prod)
+        # IMPORTANT : on n'utilise AUCUNE colonne fragile de variants (name/capacity_l)
         low_stock = (
             db.session.query(
                 Product.name.label("product_name"),
@@ -71,38 +64,30 @@ def create_app():
             .all()
         )
 
-        # Dernières opérations Éco-cups
+        # Éco-cups : dernières opérations
         last_ecocup_ops = (
             EcocupOperation.query.order_by(EcocupOperation.op_date.desc())
             .limit(10)
             .all()
         )
 
-        # Agrégats Éco-cups du jour (minuit -> maintenant)
+        # Éco-cups : agrégats du jour (minuit UTC -> maintenant)
         day_agg = (
             db.session.query(
                 func.coalesce(func.sum(EcocupOperation.qty_loaned), 0),
                 func.coalesce(func.sum(EcocupOperation.qty_returned), 0),
                 func.coalesce(
                     func.sum(
-                        (EcocupOperation.qty_loaned - EcocupOperation.qty_returned)
-                        * EcocupOperation.lost_fee_per
+                        (EcocupOperation.qty_loaned - EcocupOperation.qty_returned) * EcocupOperation.lost_fee_per
                     ),
                     0.0,
                 ),
                 func.coalesce(
-                    func.sum(
-                        EcocupOperation.qty_returned * EcocupOperation.wash_fee_per
-                    ),
+                    func.sum(EcocupOperation.qty_returned * EcocupOperation.wash_fee_per),
                     0.0,
                 ),
             )
-            .filter(
-                EcocupOperation.op_date
-                >= datetime.utcnow().replace(
-                    hour=0, minute=0, second=0, microsecond=0
-                )
-            )
+            .filter(EcocupOperation.op_date >= datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0))
             .first()
         )
         day_loaned, day_returned, day_lost_amount, day_wash_amount = day_agg
@@ -131,14 +116,14 @@ def create_app():
         return render_template("clients.html", clients=all_clients)
 
     # --------------------------------
-    # Stock (attendu par base.html) → redirige vers l'accueil pour éviter l'erreur de menu
+    # Stock (attendu par base.html) → redirige vers l'accueil
     # --------------------------------
     @app.route("/stock")
     def stock():
         return redirect(url_for("index"))
 
     # ------------------------------------------------
-    # Éco-cups — liste + saisie d’une opération
+    # Éco-cups — saisie + historique
     # ------------------------------------------------
     @app.route("/ecocups", methods=["GET", "POST"])
     def ecocups():
@@ -155,15 +140,11 @@ def create_app():
 
                 if client_id <= 0:
                     flash("Choisis un client.", "warning")
-                    return render_template(
-                        "ecocups.html", clients=clients, ops=_list_ecocup_ops()
-                    )
+                    return render_template("ecocups.html", clients=clients, ops=_list_ecocup_ops())
 
                 if qty_loaned < 0 or qty_returned < 0:
                     flash("Les quantités ne peuvent pas être négatives.", "warning")
-                    return render_template(
-                        "ecocups.html", clients=clients, ops=_list_ecocup_ops()
-                    )
+                    return render_template("ecocups.html", clients=clients, ops=_list_ecocup_ops())
 
                 op = EcocupOperation(
                     client_id=client_id,
@@ -176,26 +157,17 @@ def create_app():
                 db.session.add(op)
                 db.session.commit()
 
-                flash(
-                    f"Opération Éco-cups enregistrée : total {op.total_amount:.2f} €",
-                    "success",
-                )
+                flash(f"Opération Éco-cups enregistrée : total {op.total_amount:.2f} €", "success")
                 return redirect(url_for("ecocups"))
 
             except Exception as e:
                 db.session.rollback()
                 flash(f"Erreur lors de l’enregistrement : {e}", "danger")
 
-        return render_template(
-            "ecocups.html", clients=clients, ops=_list_ecocup_ops()
-        )
+        return render_template("ecocups.html", clients=clients, ops=_list_ecocup_ops())
 
     def _list_ecocup_ops(limit: int = 200):
-        return (
-            EcocupOperation.query.order_by(EcocupOperation.op_date.desc())
-            .limit(limit)
-            .all()
-        )
+        return EcocupOperation.query.order_by(EcocupOperation.op_date.desc()).limit(limit).all()
 
     return app
 
@@ -206,6 +178,4 @@ def create_app():
 app = create_app()
 
 if __name__ == "__main__":
-    app.run(
-        host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=True
-    )
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=True)
