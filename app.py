@@ -175,20 +175,47 @@ def create_app():
                 current_client = Client.query.get(wiz["client_id"]) if wiz.get("client_id") else None
                 return render_template("movement_wizard.html", step=3, wiz=wiz, current_client=current_client)
             elif step == 4:
+                # Base: tout sauf ecocup/gobelet
                 base_q = (
                     db.session.query(Variant)
                     .join(Product, Variant.product_id == Product.id)
                     .filter(~Product.name.ilike("%ecocup%"), ~Product.name.ilike("%gobelet%"))
                     .order_by(Product.name, Variant.size_l)
                 )
+
+                # --- IMPORTANT : en Reprise (IN), on restreint aux fûts "en jeu"
+                # MAIS on AJOUTE TOUJOURS les variantes "Matériel seul" pour permettre
+                # une reprise de matériel sans fût.
                 if wiz.get("type") == "IN" and wiz.get("client_id"):
                     open_map = _open_kegs_by_variant(wiz["client_id"])
-                    allowed_ids = [vid for vid, openq in open_map.items() if openq > 0]
-                    if allowed_ids:
-                        base_q = base_q.filter(Variant.id.in_(allowed_ids))
+                    allowed_ids = {vid for vid, openq in open_map.items() if openq > 0}
+
+                    # Récupère les IDs des variantes "Matériel seul …" (avec ou sans accent)
+                    equip_ids = set(
+                        vid for (vid,) in (
+                            db.session.query(Variant.id)
+                            .join(Product, Variant.product_id == Product.id)
+                            .filter(
+                                (~Product.name.ilike("%ecocup%")),
+                                (~Product.name.ilike("%gobelet%")),
+                                (
+                                    Product.name.ilike("%matériel%seul%")
+                                    | Product.name.ilike("%materiel%seul%")
+                                    | Product.name.ilike("%Matériel seul%")
+                                    | Product.name.ilike("%Materiel seul%")
+                                )
+                            )
+                            .all()
+                        )
+                    )
+
+                    final_ids = list(allowed_ids | equip_ids)
+                    if final_ids:
+                        base_q = base_q.filter(Variant.id.in_(final_ids))
                     else:
                         base_q = base_q.filter(Variant.id.in_([-1]))
                         flash("Aucune référence disponible à la reprise pour ce client.", "info")
+
                 variants = base_q.all()
                 return render_template("movement_wizard.html", step=4, wiz=wiz, variants=variants)
             return redirect(url_for("movement_wizard", step=1))
@@ -287,7 +314,7 @@ def create_app():
                 if not v:
                     continue
 
-                # “Matériel seul” => forcer 0 partout
+                # “Matériel seul” => forcer 0 partout et PAS de contrôle d’enjeu de fûts
                 pname = (v.product.name if v and v.product else "") or ""
                 is_equipment_only = "matériel" in pname.lower() and "seul" in pname.lower()
                 if is_equipment_only:
@@ -348,7 +375,6 @@ def create_app():
     @app.route("/movement/<int:movement_id>/delete", methods=["POST"])
     def movement_delete(movement_id):
         m = Movement.query.get_or_404(movement_id)
-        # Correction : le helper existant s’appelle revert_inventory_effect
         U.revert_inventory_effect(m.type, m.variant_id, m.qty or 0)
         client_id = m.client_id
         db.session.delete(m)
@@ -362,7 +388,7 @@ def create_app():
         if request.method == "POST":
             changed = 0
 
-            # 1) QTY_*  -> Inventory
+            # QTY_*  -> Inventory
             for key, val in request.form.items():
                 if not key.startswith("qty_"):
                     continue
@@ -379,7 +405,7 @@ def create_app():
                     inv.qty = qty
                     changed += 1
 
-            # 2) MIN_* -> ReorderRule (création si absent)
+            # MIN_* -> ReorderRule
             for key, val in request.form.items():
                 if not key.startswith("min_"):
                     continue
@@ -406,7 +432,6 @@ def create_app():
             flash(f"Inventaire enregistré ({changed} mise(s) à jour).", "success")
             return redirect(url_for("stock"))
 
-        # GET
         rows = U.get_stock_items()
         alerts = U.compute_reorder_alerts()
         return render_template("stock.html", rows=rows, alerts=alerts)
