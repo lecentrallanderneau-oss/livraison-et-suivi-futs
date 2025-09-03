@@ -85,12 +85,7 @@
           </div>
           <div class="col-12 col-md-6">
             <div><strong>Client :</strong>
-              {% if wiz.get('client_id') %}
-                {% set c = (clients|selectattr('id','equalto', wiz.get('client_id'))|list|first) if false else None %}
-                ID {{ wiz.get('client_id') }}
-              {% else %}
-                —
-              {% endif %}
+              {{ (current_client.name if current_client else '—') }}
             </div>
           </div>
         </div>
@@ -180,7 +175,6 @@
           const body = document.getElementById('lines-body');
           const tpl = body.querySelector('tr.line');
           const clone = tpl.cloneNode(true);
-          // reset values
           clone.querySelectorAll('input').forEach(i => {
             if (i.name === 'qty') i.value = 1;
             else i.value = '';
