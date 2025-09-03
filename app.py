@@ -57,18 +57,15 @@ def create_app():
     def index():
         clients = Client.query.order_by(Client.name.asc()).all()
 
-        # ⚠️ IMPORTANT : on ne sélectionne plus l'entité Variant complète
-        # pour éviter la colonne manquante variants.name.
-        # On extrait explicitement uniquement ce dont on a besoin.
+        # IMPORTANT : on ne lit AUCUNE colonne de variants (name/capacity_l n'existent pas en prod)
         low_stock = (
             db.session.query(
                 Product.name.label("product_name"),
-                Variant.capacity_l.label("capacity_l"),
                 Inventory.qty.label("qty"),
                 ReorderRule.min_qty.label("min_qty"),
             )
+            .join(Variant, Variant.product_id == Product.id)
             .join(Inventory, Inventory.variant_id == Variant.id)
-            .join(Product, Product.id == Variant.product_id)
             .join(ReorderRule, ReorderRule.variant_id == Variant.id)
             .filter(Inventory.qty < ReorderRule.min_qty)
             .all()
