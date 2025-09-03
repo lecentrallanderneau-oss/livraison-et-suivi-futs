@@ -100,22 +100,21 @@ def create_app():
     def client_detail(client_id):
         c = Client.query.get_or_404(client_id)
         view = U.summarize_client_detail(c)
-
         movements = (
             Movement.query.filter_by(client_id=client_id)
             .order_by(Movement.created_at.desc(), Movement.id.desc())
             .all()
         )
-
         return render_template(
             "client_detail.html",
             client=c,
+            view=view,  # on passe aussi 'view' pour compat maximale
             movements=movements,
             beer_billed_cum=view["beer_eur"],
             deposit_in_play=view["deposit_eur"],
             equipment_totals=view["equipment"],
-            liters_out_cum=view.get("liters_out_cum", 0.0),   # compat EN
-            litres_out_cum=view.get("liters_out_cum", 0.0),  # compat FR
+            liters_out_cum=view.get("liters_out_cum", 0.0),
+            litres_out_cum=view.get("liters_out_cum", 0.0),
         )
 
     @app.route("/catalog")
@@ -154,7 +153,11 @@ def create_app():
                 clients = Client.query.order_by(Client.name.asc()).all()
                 return render_template("movement_wizard.html", step=2, wiz=wiz, clients=clients)
             elif step == 3:
-                return render_template("movement_wizard.html", step=3, wiz=wiz)
+                # ✅ On passe explicitement le client courant pour l’affichage
+                current_client = None
+                if wiz.get("client_id"):
+                    current_client = Client.query.get(wiz["client_id"])
+                return render_template("movement_wizard.html", step=3, wiz=wiz, current_client=current_client)
             elif step == 4:
                 # Filtrage des variantes si Reprise: uniquement celles encore présentes chez le client
                 base_q = (
@@ -169,7 +172,6 @@ def create_app():
                     if allowed_ids:
                         base_q = base_q.filter(Variant.id.in_(allowed_ids))
                     else:
-                        # aucune ref dispo -> liste vide
                         base_q = base_q.filter(Variant.id.in_([-1]))
                         flash("Aucune référence disponible à la reprise pour ce client.", "info")
                 variants = base_q.all()
