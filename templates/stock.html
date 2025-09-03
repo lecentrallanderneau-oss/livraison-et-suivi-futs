@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_macros.html" as ui %}
 {% block title %}Stock bar{% endblock %}
 {% block content %}
 <div class="d-flex align-items-center justify-content-between">
@@ -7,16 +8,7 @@
 </div>
 <hr>
 
-{% if alerts and alerts|length > 0 %}
-<div class="alert alert-warning">
-  <div class="fw-bold mb-1">⚠️ Réassort conseillé</div>
-  <ul class="mb-0">
-    {% for a in alerts %}
-      <li>{{ a.product.name }} — {{ a.variant.size_l }} L : en stock {{ a.qty }}, mini {{ a.min_qty }}, à commander {{ a.need }}</li>
-    {% endfor %}
-  </ul>
-</div>
-{% endif %}
+{{ ui.alerts_list(alerts) }}
 
 <form method="post" class="card">
   <div class="card-body p-0">
