@@ -109,7 +109,7 @@
           <table class="table table-sm align-middle mb-0">
             <thead>
               <tr>
-                <th style="min-width: 240px;">Produit</th>
+                <th style="min-width: 260px;">Produit</th>
                 <th class="text-end" style="width: 120px;">Qté</th>
                 <th class="text-end" style="width: 140px;">Prix TTC (/fût)</th>
                 <th class="text-end" style="width: 140px;">Consigne (/fût)</th>
@@ -119,16 +119,17 @@
             <tbody id="lines-body">
               <tr class="line">
                 <td>
-                  <select name="variant_id" class="form-select" required>
+                  <select name="variant_id" class="form-select variant-select" required>
                     <option value="" disabled selected>Choisir…</option>
                     {% for v in variants %}
                       <option value="{{ v.id }}">{{ v.product.name }} — {{ v.size_l }} L</option>
                     {% endfor %}
                   </select>
+                  <div class="form-text">Astuce : si vous choisissez un produit nommé “Matériel seul…”, Qté, Prix et Consigne passeront à 0.</div>
                 </td>
-                <td><input type="number" name="qty" class="form-control text-end" min="1" step="1" value="1" required></td>
-                <td><input type="number" name="unit_price_ttc" class="form-control text-end" step="0.01" placeholder="auto"></td>
-                <td><input type="number" name="deposit_per_keg" class="form-control text-end" step="0.01" value="{{ 30 if wiz.get('type') in ['OUT','IN'] else '' }}" placeholder="30"></td>
+                <td><input type="number" name="qty" class="form-control text-end qty" min="1" step="1" value="1" required></td>
+                <td><input type="number" name="unit_price_ttc" class="form-control text-end price" step="0.01" placeholder="auto"></td>
+                <td><input type="number" name="deposit_per_keg" class="form-control text-end deposit" step="0.01" value="{{ 30 if wiz.get('type') in ['OUT','IN'] else '' }}" placeholder="30"></td>
                 <td>
                   <button class="btn btn-sm btn-outline-danger" type="button" onclick="removeLine(this)">Supprimer</button>
                 </td>
@@ -171,17 +172,54 @@
       </form>
 
       <script>
+        function isEquipOnlyOption(selectEl) {
+          const txt = (selectEl.options[selectEl.selectedIndex]?.text || "").toLowerCase();
+          return txt.includes("matériel") && txt.includes("seul");
+        }
+
+        function applyEquipOnlyState(row, equipOnly) {
+          const qty = row.querySelector('.qty');
+          const price = row.querySelector('.price');
+          const deposit = row.querySelector('.deposit');
+
+          if (equipOnly) {
+            qty.value = 0;
+            price.value = 0;
+            deposit.value = 0;
+
+            qty.setAttribute('disabled', 'disabled');
+            price.setAttribute('disabled', 'disabled');
+            deposit.setAttribute('disabled', 'disabled');
+          } else {
+            qty.removeAttribute('disabled');
+            price.removeAttribute('disabled');
+            deposit.removeAttribute('disabled');
+            // ne pas écraser les valeurs manuelles ; on laisse tel quel
+          }
+        }
+
+        function bindLine(row) {
+          const select = row.querySelector('.variant-select');
+          select.addEventListener('change', function() {
+            applyEquipOnlyState(row, isEquipOnlyOption(select));
+          });
+        }
+
         function addLine() {
           const body = document.getElementById('lines-body');
           const tpl = body.querySelector('tr.line');
           const clone = tpl.cloneNode(true);
+          // reset champs
           clone.querySelectorAll('input').forEach(i => {
-            if (i.name === 'qty') i.value = 1;
+            if (i.classList.contains('qty')) i.value = 1;
             else i.value = '';
+            i.removeAttribute('disabled');
           });
           clone.querySelectorAll('select').forEach(s => { s.selectedIndex = 0; });
           body.appendChild(clone);
+          bindLine(clone);
         }
+
         function removeLine(btn) {
           const row = btn.closest('tr');
           const body = document.getElementById('lines-body');
@@ -189,6 +227,9 @@
             row.remove();
           }
         }
+
+        // Bind initial
+        document.querySelectorAll('#lines-body tr.line').forEach(bindLine);
       </script>
 
     {% else %}
