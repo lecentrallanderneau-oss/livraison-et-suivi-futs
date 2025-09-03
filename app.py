@@ -166,7 +166,7 @@ def create_app():
         if request.method == "GET":
             step = int(request.args.get("step", 1))
             if step == 1:
-                # Date non pré-remplie
+                # Date NON pré-remplie ; si vide à l’enregistrement -> date de saisie
                 return render_template("movement_wizard.html", step=1, wiz=wiz)
             elif step == 2:
                 clients = Client.query.order_by(Client.name.asc()).all()
@@ -183,7 +183,7 @@ def create_app():
                     .order_by(Product.name, Variant.size_l)
                 )
 
-                # En Reprise (IN) : on limite aux fûts "en jeu", mais on AJOUTE TOUJOURS "Matériel seul"
+                # En Reprise (IN) : limiter aux fûts “en jeu” + TOUJOURS ajouter “Matériel seul …”
                 if wiz.get("type") == "IN" and wiz.get("client_id"):
                     open_map = _open_kegs_by_variant(wiz["client_id"])
                     allowed_ids = {vid for vid, openq in open_map.items() if openq > 0}
@@ -373,8 +373,18 @@ def create_app():
     def movement_delete(movement_id):
         m = Movement.query.get_or_404(movement_id)
         client_id = m.client_id  # sauvegarde avant suppression
-        # Rétablit le stock si nécessaire (OUT/FULL)
-        U.revert_inventory_effect(m.type, m.variant_id, m.qty or 0)
+
+        # RÉTABLIR LE STOCK ICI (au lieu d'appeler utils.revert_inventory_effect)
+        # - OUT   : on remet +qty en stock
+        # - FULL  : on retire qty du stock (retour plein annulé)
+        # - IN/DEFECT : pas d’impact sur le stock de fûts pleins
+        if m.qty and m.variant_id:
+            inv = U.get_or_create_inventory(m.variant_id)
+            if m.type == "OUT":
+                inv.qty = (inv.qty or 0) + (m.qty or 0)
+            elif m.type == "FULL":
+                inv.qty = (inv.qty or 0) - (m.qty or 0)
+
         db.session.delete(m)
         db.session.commit()
         flash("Saisie supprimée.", "success")
