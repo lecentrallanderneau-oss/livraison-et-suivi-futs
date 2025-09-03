@@ -2,24 +2,36 @@
 {% block title %}{{ client.name }} · Gestion fûts{% endblock %}
 {% block content %}
 <div class="d-flex align-items-center justify-content-between">
-  <h1 class="h3">{{ client.name }}</h1>
+  <h1 class="h3 mb-0">{{ client.name }}</h1>
   <a class="btn btn-primary" href="{{ url_for('movement_new', client_id=client.id) }}">Nouveau mouvement</a>
 </div>
 <hr>
 
 <div class="row g-3">
+  <!-- Colonne récap -->
   <div class="col-md-3">
-    <div class="card h-100">
+    <div class="card mb-3">
+      <div class="card-header">Récapitulatif</div>
       <div class="card-body">
-        <div class="mb-2"><span class="muted">Bière facturée cumulée</span><div class="card-number">{{ '%.2f'|format(beer_billed_cum or 0) }} €</div></div>
-        <div class="mb-2"><span class="muted">Consigne en cours</span><div class="card-number">{{ '%.2f'|format(deposit_in_play or 0) }} €</div></div>
-        <div class="mb-2"><span class="muted">Litres livrés cumulés</span><div class="card-number">{{ delivered_qty_cum or 0 }} L</div></div>
-        <div class="mb-2"><span class="muted">Volume actuellement en place</span><div class="card-number">{{ in_place_total or 0 }} L</div></div>
-        <hr>
-        <div class="mb-1"><span class="muted">Dernière livraison</span><div>{{ last_delivery_at or '—' }}</div></div>
-        <div class="mb-1"><span class="muted">Dernier retrait</span><div>{{ last_pickup_at or '—' }}</div></div>
-        <hr>
-        <div class="mb-1"><span class="muted">Matériel en prêt</span></div>
+        <div class="mb-2">
+          <div class="muted small">Bière facturée cumulée</div>
+          <div class="fs-5 fw-bold">{{ '%.2f'|format(beer_billed_cum or 0) }} €</div>
+        </div>
+        <div class="mb-2">
+          <div class="muted small">Consigne en cours</div>
+          <div class="fs-5 fw-bold">{{ '%.2f'|format(deposit_in_play or 0) }} €</div>
+        </div>
+        <div class="mb-2">
+          <div class="muted small">Litres livrés cumulés</div>
+          <div class="fs-5 fw-bold">{{ delivered_qty_cum or 0 }} L</div>
+        </div>
+      </div>
+    </div>
+
+    {% if equipment_totals is defined %}
+    <div class="card">
+      <div class="card-header">Matériel prêté (totaux)</div>
+      <div class="card-body">
         <ul class="list-unstyled mb-0">
           <li>Tireuse : <strong>{{ equipment_totals.tireuse or 0 }}</strong></li>
           <li>CO₂ : <strong>{{ equipment_totals.co2 or 0 }}</strong></li>
@@ -28,8 +40,10 @@
         </ul>
       </div>
     </div>
+    {% endif %}
   </div>
 
+  <!-- Colonne principale -->
   <div class="col-md-9">
     <div class="card mb-3">
       <div class="card-header">Stock par variantes</div>
@@ -38,34 +52,32 @@
           <thead>
             <tr>
               <th>Produit</th>
-              <th>Contenance</th>
-              <th class="text-end">Sorties</th>
-              <th class="text-end">Entrées/Defect</th>
-              <th class="text-end">En place (est.)</th>
-              <th class="text-end">Prix cat. (€)</th>
+              <th>Contenance (L)</th>
+              <th class="text-end">Stock (fûts)</th>
             </tr>
           </thead>
           <tbody>
-            {% for r in rows %}
-              {% set en_place = (r.out_qty or 0) - (r.in_qty or 0) %}
-              <tr>
-                <td>{{ r.product_name }}</td>
-                <td>{{ r.size_l }} L</td>
-                <td class="text-end">{{ r.out_qty or 0 }}</td>
-                <td class="text-end">{{ r.in_qty or 0 }}</td>
-                <td class="text-end">{{ en_place }}</td>
-                <td class="text-end">{{ '%.2f'|format(r.catalog_price or 0) }}</td>
-              </tr>
+            {% if stock_rows is defined and stock_rows %}
+              {% for r in stock_rows %}
+                <tr>
+                  <td>{{ r.product }}</td>
+                  <td>{{ r.size_l }}</td>
+                  <td class="text-end">{{ r.stock }}</td>
+                </tr>
+              {% endfor %}
             {% else %}
-              <tr><td colspan="6" class="text-center text-muted">Aucune donnée.</td></tr>
-            {% endfor %}
+              <tr><td colspan="3" class="text-center text-muted">Aucune donnée de stock.</td></tr>
+            {% endif %}
           </tbody>
         </table>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-header">Historique des mouvements</div>
+      <div class="card-header d-flex align-items-center justify-content-between">
+        <span>Historique des mouvements</span>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('movement_new', client_id=client.id) }}">+ Nouveau</a>
+      </div>
       <div class="card-body p-0">
         <table class="table table-sm mb-0 align-middle">
           <thead>
@@ -73,43 +85,31 @@
               <th>Date</th>
               <th>Type</th>
               <th>Produit</th>
-              <th class="text-end">Taille</th>
+              <th class="text-end">L</th>
               <th class="text-end">Qté</th>
-              <th class="text-end">Prix unitaire</th>
-              <th class="text-end">Consigne/ fût</th>
-              <th>Matériel</th>
-              <th>Note</th>
-              <th></th>
+              <th class="text-end">PU TTC (€)</th>
+              <th class="text-end">Cons./fût (€)</th>
+              <th>Note / Matériel</th>
+              <th class="text-end">Action</th>
             </tr>
           </thead>
           <tbody>
             {% for m in movements %}
               <tr>
-                <td class="text-nowrap">{{ m.when.strftime('%Y-%m-%d %H:%M') if m.when else '—' }}</td>
+                <td class="text-nowrap">{{ m.created_at }}</td>
                 <td>{{ m.type }}</td>
-                <td>{{ m.product }}</td>
-                <td class="text-end">{{ m.size_l }} L</td>
+                <td>{{ m.variant.product.name }}</td>
+                <td class="text-end">{{ m.variant.size_l }}</td>
                 <td class="text-end">{{ m.qty }}</td>
-                <td class="text-end">{{ m.unit_price is not none and ('%.2f'|format(m.unit_price)) or '—' }}</td>
+                <td class="text-end">{{ m.unit_price_ttc is not none and ('%.2f'|format(m.unit_price_ttc)) or '—' }}</td>
                 <td class="text-end">{{ m.deposit_per_keg and ('%.2f'|format(m.deposit_per_keg)) or '—' }}</td>
-                <td>
-                  {% set e = m.equipment %}
-                  {% if e.tireuse or e.co2 or e.comptoir or e.tonnelle %}
-                    <small class="muted">
-                      {% if e.tireuse %} tireuse={{ e.tireuse }}{% endif %}
-                      {% if e.co2 %} co2={{ e.co2 }}{% endif %}
-                      {% if e.comptoir %} comptoir={{ e.comptoir }}{% endif %}
-                      {% if e.tonnelle %} tonnelle={{ e.tonnelle }}{% endif %}
-                    </small>
-                  {% else %}—{% endif %}
-                </td>
-                <td>{{ m['note'] or '' }}</td>
+                <td>{{ m.notes or '—' }}</td>
                 <td class="text-end">
                   <a class="btn btn-sm btn-outline-danger" href="{{ url_for('movement_confirm_delete', movement_id=m.id) }}">Supprimer</a>
                 </td>
               </tr>
             {% else %}
-              <tr><td colspan="10" class="text-center text-muted">Aucun mouvement.</td></tr>
+              <tr><td colspan="9" class="text-center text-muted">Aucun mouvement.</td></tr>
             {% endfor %}
           </tbody>
         </table>
