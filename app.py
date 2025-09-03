@@ -111,7 +111,7 @@ def create_app():
         return render_template(
             "index.html",
             clients=clients,
-            low_stock=low_stock,  # tuples avec champs nommés
+            low_stock=low_stock,
             last_ecocup_ops=last_ecocup_ops,
             day_ecocup_summary={
                 "loaned": day_loaned or 0,
@@ -121,6 +121,15 @@ def create_app():
                 "total": day_total_amount,
             },
         )
+
+    # --------------------------------
+    # Clients (réintroduit pour base.html)
+    # --------------------------------
+    @app.route("/clients")
+    def clients():
+        # Liste simple des clients (suppose l'existence de templates/clients.html dans ton projet)
+        all_clients = Client.query.order_by(Client.name.asc()).all()
+        return render_template("clients.html", clients=all_clients)
 
     # ------------------------------------------------
     # Éco-cups — liste + saisie d’une opération
